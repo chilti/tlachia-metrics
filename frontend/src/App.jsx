@@ -43,6 +43,7 @@ export default function App() {
   const [selectedAuthor, setSelectedAuthor] = useState(null)
   const [startYear, setStartYear] = useState(2015)
   const [endYear, setEndYear] = useState(2026)
+  const [allYears, setAllYears] = useState(false)
   const [oaStatus, setOaStatus] = useState('all')
   const [countryCode, setCountryCode] = useState('')
   const [limit, setLimit] = useState(250)
@@ -95,7 +96,7 @@ export default function App() {
       }, 400)
       return () => clearTimeout(timer)
     }
-  }, [query, selectedTopic, selectedSource, selectedInstitution, selectedAuthor, startYear, endYear, oaStatus, countryCode, searchMode])
+  }, [query, selectedTopic, selectedSource, selectedInstitution, selectedAuthor, startYear, endYear, allYears, oaStatus, countryCode, searchMode])
 
   // Fetch Preview Works from Filters
   const fetchPreview = async (page = 1) => {
@@ -108,8 +109,8 @@ export default function App() {
         source_id: selectedSource?.id,
         institution_id: selectedInstitution?.id,
         author_id: selectedAuthor?.id,
-        start_year: startYear,
-        end_year: endYear,
+        start_year: allYears ? 1900 : startYear,
+        end_year: allYears ? 2026 : endYear,
         oa_status: oaStatus !== 'all' ? oaStatus : undefined,
         country_code: countryCode || undefined,
         limit: pageSize,
@@ -225,8 +226,8 @@ export default function App() {
         source_id: selectedSource?.id,
         institution_id: selectedInstitution?.id,
         author_id: selectedAuthor?.id,
-        start_year: startYear,
-        end_year: endYear,
+        start_year: allYears ? 1900 : startYear,
+        end_year: allYears ? 2026 : endYear,
         oa_status: oaStatus !== 'all' ? oaStatus : undefined,
         country_code: countryCode || undefined,
         limit: limit > 0 ? limit : undefined
@@ -497,16 +498,19 @@ export default function App() {
                   <div className="filter-group">
                     <label className="filter-label">
                       <span>Rango Temporal</span>
-                      <span style={{ color: 'var(--accent-primary)', fontSize: '0.75rem' }}>{startYear} — {endYear}</span>
+                      <span style={{ color: 'var(--accent-primary)', fontSize: '0.75rem' }}>
+                        {allYears ? 'Todo (Histórico)' : `${startYear} — ${endYear}`}
+                      </span>
                     </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', opacity: allYears ? 0.45 : 1 }}>
                       <div>
                         <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Desde:</span>
                         <input
                           type="number"
                           className="input-text"
-                          min="1970"
+                          min="1900"
                           max="2026"
+                          disabled={allYears}
                           value={startYear}
                           onChange={(e) => setStartYear(parseInt(e.target.value) || 1970)}
                         />
@@ -516,12 +520,24 @@ export default function App() {
                         <input
                           type="number"
                           className="input-text"
-                          min="1970"
+                          min="1900"
                           max="2026"
+                          disabled={allYears}
                           value={endYear}
                           onChange={(e) => setEndYear(parseInt(e.target.value) || 2026)}
                         />
                       </div>
+                    </div>
+                    <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--text-main)', userSelect: 'none' }}>
+                        <input
+                          type="checkbox"
+                          checked={allYears}
+                          onChange={(e) => setAllYears(e.target.checked)}
+                          style={{ cursor: 'pointer', accentColor: 'var(--accent-primary)', width: '15px', height: '15px' }}
+                        />
+                        <span>Todo (Histórico completo)</span>
+                      </label>
                     </div>
                   </div>
 

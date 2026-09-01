@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Environment and secrets
+.env
+.env.local
+
+# Data and Cache
+data/cache/
+*.parquet
+*.csv
+*.duckdb
+*.duckdb.wal
+scratch/
+
+# Generated zip packages (keep folder structure)
+data/exports/**/*.zip
+data/exports/**/*.json
+
+# IDE
+.vscode/
+.idea/
+.DS_Store

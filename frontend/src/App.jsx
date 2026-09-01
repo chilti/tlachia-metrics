@@ -26,7 +26,10 @@ import {
   Globe2,
   Lock,
   Unlock,
-  Calendar
+  Calendar,
+  Database,
+  Library,
+  Check
 } from 'lucide-react'
 
 const API_BASE = ''
@@ -64,6 +67,7 @@ export default function App() {
 
   // Results & Pagination State
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
   const [previewData, setPreviewData] = useState({ total: 0, results: [], page: 1, total_pages: 1 })
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 20
@@ -88,15 +92,11 @@ export default function App() {
       .catch(() => setApiOnline(false))
   }, [])
 
-  // Debounced Preview Trigger
-  useEffect(() => {
-    if (searchMode === 'filters') {
-      const timer = setTimeout(() => {
-        fetchPreview(1)
-      }, 400)
-      return () => clearTimeout(timer)
-    }
-  }, [query, selectedTopic, selectedSource, selectedInstitution, selectedAuthor, startYear, endYear, allYears, oaStatus, countryCode, searchMode])
+  // Explicit Search Trigger
+  const handleSearch = () => {
+    setHasSearched(true)
+    fetchPreview(1)
+  }
 
   // Fetch Preview Works from Filters
   const fetchPreview = async (page = 1) => {
@@ -588,6 +588,17 @@ export default function App() {
                       <option value={0}>Sin límite (Todo el corpus)</option>
                     </select>
                   </div>
+
+                  {/* Search Button in Sidebar */}
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: '100%', marginTop: '14px', padding: '12px', fontSize: '0.9rem' }}
+                    onClick={handleSearch}
+                    disabled={previewLoading}
+                  >
+                    {previewLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+                    Buscar en OpenAlex
+                  </button>
                 </>
               )}
 
@@ -601,9 +612,9 @@ export default function App() {
                     value={idsText}
                     onChange={(e) => setIdsText(e.target.value)}
                   />
-                  <button className="btn btn-secondary" onClick={handlePreviewIds}>
-                    <RefreshCw size={14} />
-                    Validar IDs
+                  <button className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }} onClick={handlePreviewIds} disabled={previewLoading}>
+                    {previewLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={14} />}
+                    Consultar IDs
                   </button>
                 </div>
               )}
@@ -660,18 +671,37 @@ export default function App() {
                     <input
                       type="text"
                       className="search-input"
+                      style={{ paddingRight: '120px' }}
                       placeholder="Buscar por título, palabras clave, conceptos o tema..."
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
                     />
                     {query && (
                       <button
                         onClick={() => setQuery('')}
-                        style={{ position: 'absolute', right: '16px', background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
+                        style={{ position: 'absolute', right: '115px', background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
                       >
                         <X size={18} />
                       </button>
                     )}
+                    <button
+                      className="btn btn-primary"
+                      style={{
+                        position: 'absolute',
+                        right: '8px',
+                        top: '8px',
+                        bottom: '8px',
+                        padding: '0 20px',
+                        borderRadius: 'var(--radius-md)',
+                        fontSize: '0.85rem'
+                      }}
+                      onClick={handleSearch}
+                      disabled={previewLoading}
+                    >
+                      {previewLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                      Buscar
+                    </button>
                   </div>
 
                   {/* Active Chips Bar */}
@@ -750,7 +780,7 @@ export default function App() {
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                     {limit > 0 && previewData.total > limit
                       ? `Se procesarán los primeros ${limit.toLocaleString()} artículos más citados.`
-                      : `Se calcularán los 48 libros Excel con indicadores completos.`}
+                      : `Se calcularán los 48 libros Excel con indicadores analíticos completos.`}
                   </p>
                 </div>
 
@@ -775,108 +805,141 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Results Table Section */}
-              <div className="glass-panel" style={{ padding: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-                  <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                    Vista Previa de Artículos ({previewData.results.length} en pantalla)
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button
-                      className="btn-outline"
-                      style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                      disabled={currentPage <= 1 || previewLoading}
-                      onClick={() => fetchPreview(currentPage - 1)}
-                    >
-                      Anterior
-                    </button>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
-                      Página {currentPage} de {Math.max(1, previewData.total_pages)}
-                    </span>
-                    <button
-                      className="btn-outline"
-                      style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                      disabled={currentPage >= previewData.total_pages || previewLoading}
-                      onClick={() => fetchPreview(currentPage + 1)}
-                    >
-                      Siguiente
-                    </button>
+              {/* OpenAlex Universe & Corpus Info Panel */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Global OpenAlex Stats */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+                  <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)' }}>
+                      <Database size={22} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>569M+</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Obras Científicas Globales</div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'rgba(167, 139, 250, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}>
+                      <Users size={22} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>337M+</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Perfiles de Investigadores</div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'rgba(52, 211, 153, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
+                      <Building2 size={22} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>109K+</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Instituciones & RORs</div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'rgba(251, 191, 36, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fbbf24' }}>
+                      <Library size={22} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>124K+</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Revistas & Fuentes</div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="results-table-wrapper">
-                  <table className="results-table">
-                    <thead>
-                      <tr>
-                        <th>Artículo & DOI</th>
-                        <th>Año</th>
-                        <th>Citas</th>
-                        <th>FWCI</th>
-                        <th>Acceso Abierto</th>
-                        <th>Tópico / Disciplina</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {previewLoading ? (
-                        <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', padding: '40px' }}>
-                            <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 12px', color: 'var(--accent-primary)' }} />
-                            <p style={{ color: 'var(--text-muted)' }}>Consultando OpenAlex ClickHouse...</p>
-                          </td>
-                        </tr>
-                      ) : previewData.results.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>
-                            No se encontraron artículos con los criterios actuales.
-                          </td>
-                        </tr>
-                      ) : (
-                        previewData.results.map((work) => (
-                          <tr key={work.id}>
-                            <td style={{ maxWidth: '440px' }}>
-                              <div className="work-title">{work.title}</div>
-                              <div className="work-meta">
-                                {work.authors && work.authors.length > 0 && (
-                                  <span className="work-authors">{work.authors.join(', ')}</span>
-                                )}
-                                {work.doi && (
-                                  <a
-                                    href={`https://doi.org/${work.doi}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={{ color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', gap: '2px', textDecoration: 'none' }}
-                                  >
-                                    DOI <ExternalLink size={10} />
-                                  </a>
-                                )}
-                              </div>
-                            </td>
-                            <td>
-                              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{work.publication_year}</span>
-                            </td>
-                            <td>
-                              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#f59e0b' }}>
-                                {work.cited_by_count?.toLocaleString() || 0}
-                              </span>
-                            </td>
-                            <td>
-                              <span style={{ fontFamily: 'var(--font-mono)', color: work.fwci >= 1.0 ? '#34d399' : 'var(--text-dim)' }}>
-                                {work.fwci ? work.fwci.toFixed(2) : '-'}
-                              </span>
-                            </td>
-                            <td>
-                              {renderOaBadge(work.oa_status)}
-                            </td>
-                            <td>
-                              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                                {work.topic || work.field || '-'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                {/* Corpus Coverage Card */}
+                <div className="glass-panel" style={{ padding: '24px' }}>
+                  {previewLoading ? (
+                    <div style={{ textAlign: 'center', padding: '40px' }}>
+                      <Loader2 size={36} className="animate-spin" style={{ margin: '0 auto 14px', color: 'var(--accent-primary)' }} />
+                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>Consultando OpenAlex ClickHouse...</h4>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Cuantificando registros y aplicando filtros analíticos en el cluster de alta velocidad.
+                      </p>
+                    </div>
+                  ) : !hasSearched ? (
+                    <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+                      <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'rgba(56, 189, 248, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', margin: '0 auto 16px' }}>
+                        <Search size={28} />
+                      </div>
+                      <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
+                        Dimensionamiento del Corpus en OpenAlex
+                      </h3>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '520px', margin: '0 auto 20px', lineHeight: 1.5 }}>
+                        Configura los filtros en la barra lateral o escribe palabras clave en el buscador y presiona <strong>Buscar</strong> para consultar la cantidad exacta de artículos disponibles antes de calcular las 48 tablas.
+                      </p>
+                      <button className="btn btn-primary" style={{ padding: '10px 28px', fontSize: '0.9rem' }} onClick={handleSearch}>
+                        <Search size={16} /> Consultar Corpus
+                      </button>
+                    </div>
+                  ) : previewData.total === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+                      <AlertCircle size={36} color="#f59e0b" style={{ margin: '0 auto 12px' }} />
+                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>No se encontraron artículos</h4>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px', maxWidth: '460px', margin: '4px auto 0' }}>
+                        No existen registros que coincidan con la combinación de filtros seleccionada. Prueba ampliando el rango de años o flexibilizando las restricciones.
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '16px', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <CheckCircle2 size={24} color="#10b981" />
+                          <div>
+                            <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                              Corpus Localizado con Éxito
+                            </h4>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                              Resultados verificados sobre la base de datos OpenAlex
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>
+                            {previewData.total.toLocaleString()}
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Artículos Totales Encontrados
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Criteria summary */}
+                      <div style={{ background: '#0e1526', borderRadius: 'var(--radius-md)', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                        <div>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Rango Temporal</span>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
+                            {allYears ? 'Todo (1900 — 2026)' : `${startYear} — ${endYear}`}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Acceso Abierto</span>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
+                            {oaStatus === 'all' ? 'Todos los estados' : oaStatus.toUpperCase()}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>País / Territorio</span>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
+                            {countryCode || 'Global (Sin filtro)'}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Límite para Métricas</span>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#34d399', marginTop: '2px' }}>
+                            {limit > 0 && previewData.total > limit ? `Top ${limit.toLocaleString()} citados` : `Completo (${previewData.total.toLocaleString()})`}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

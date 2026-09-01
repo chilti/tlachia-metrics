@@ -256,9 +256,142 @@ class CorpusBuilder:
         query = f"""
         SELECT *
         FROM works_flat
-        WHERE (topic_id = '{t_id}' OR primary_topic_id = '{t_id}' OR has(all_topics, '{t_id}'))
+        WHERE (topic_id = '{t_id}' OR topic_id = 'https://openalex.org/{t_id}'
+               OR primary_topic_id = '{t_id}' OR primary_topic_id = 'https://openalex.org/{t_id}'
+               OR has(all_topics, '{t_id}') OR has(all_topics, 'https://openalex.org/{t_id}'))
           AND publication_year BETWEEN {start_year} AND {end_year}
         """
+        df = self.engine.query_df(query)
+        return self._normalize_dataframe(df)
+
+    def _build_where_clauses(self, filters: Dict[str, Any]) -> List[str]:
+        clauses = []
+        
+        # Rango de años
+        start_year = int(filters.get('start_year') or 1970)
+        end_year = int(filters.get('end_year') or 2026)
+        clauses.append(f"publication_year BETWEEN {start_year} AND {end_year}")
+
+        # Búsqueda libre en título o abstract
+        query = filters.get('query') or filters.get('search_query') or filters.get('q')
+        if query and str(query).strip():
+            clean_q = str(query).strip().replace("'", "\\'")
+            clauses.append(f"positionCaseInsensitiveUTF8(title, '{clean_q}') > 0")
+
+        # Tópico
+        topic_id = filters.get('topic_id')
+        if topic_id:
+            t_id = str(topic_id).split('/')[-1].strip()
+            clauses.append(f"(topic_id = '{t_id}' OR topic_id = 'https://openalex.org/{t_id}' OR primary_topic_id = '{t_id}' OR primary_topic_id = 'https://openalex.org/{t_id}' OR has(all_topics, '{t_id}') OR has(all_topics, 'https://openalex.org/{t_id}'))")
+
+        # Revista / Fuente
+        source_id = filters.get('source_id')
+        if source_id:
+            s_id = str(source_id).split('/')[-1].strip()
+            clauses.append(f"(source_id = '{s_id}' OR source_id = 'https://openalex.org/{s_id}')")
+
+        # Institución / ROR
+        institution_id = filters.get('institution_id')
+        if institution_id:
+            i_id = str(institution_id).split('/')[-1].strip()
+            clauses.append(f"(has(institution_ids, '{i_id}') OR has(institution_ids, 'https://openalex.org/{i_id}') OR has(institution_rors, '{i_id}'))")
+
+        # Autor / Investigador
+        author_id = filters.get('author_id')
+        if author_id:
+            a_id = str(author_id).split('/')[-1].strip()
+            clauses.append(f"(has(author_ids, '{a_id}') OR has(author_ids, 'https://openalex.org/{a_id}'))")
+
+        # País
+        country_code = filters.get('country_code')
+        if country_code:
+            c_code = str(country_code).strip().upper()
+            clauses.append(f"(country_code = '{c_code}' OR has(country_codes, '{c_code}') OR has(all_country_codes, '{c_code}'))")
+
+        # Acceso Abierto
+        is_oa = filters.get('is_oa')
+        if is_oa is not None:
+            val = 1 if is_oa in (1, True, 'true', '1', 'True') else 0
+            clauses.append(f"is_oa = {val}")
+
+        oa_status = filters.get('oa_status')
+        if oa_status and str(oa_status).lower() not in ('all', 'todos', 'any', ''):
+            clean_oa = str(oa_status).strip().lower()
+            clauses.append(f"lower(oa_status) = '{clean_oa}'")
+
+        # DOAJ
+        if filters.get('is_doaj'):
+            clauses.append("(is_doaj_indexed = 1 OR journal_is_in_doaj = 1)")
+
+        # Core journal
+        if filters.get('is_core'):
+            clauses.append("(is_core_journal = 1 OR journal_is_core = 1)")
+
+        return clauses
+
+    def count_from_filters(self, filters: Dict[str, Any]) -> int:
+        clauses = self._build_where_clauses(filters)
+        where_sql = " AND ".join(clauses) if clauses else "1=1"
+        sql = f"SELECT count(*) as total FROM works_flat WHERE {where_sql}"
+        df = self.engine.query_df(sql)
+        if len(df) > 0 and 'total' in df.columns:
+            return int(df.iloc[0]['total'])
+        return 0
+
+    def preview_from_filters(self, filters: Dict[str, Any], limit: int = 25, offset: int = 0) -> Dict[str, Any]:
+        clauses = self._build_where_clauses(filters)
+        where_sql = " AND ".join(clauses) if clauses else "1=1"
+        
+        # Conteo total
+        count_sql = f"SELECT count(*) as total FROM works_flat WHERE {where_sql}"
+        df_count = self.engine.query_df(count_sql)
+        total_works = int(df_count.iloc[0]['total']) if len(df_count) > 0 else 0
+
+        # Muestra ordenada por citas descendentes
+        cols = [
+            'id', 'doi', 'title', 'publication_year', 'cited_by_count', 'fwci',
+            'is_oa', 'oa_status', 'source_id', 'topic_id', 'topic', 'field',
+            'author_names', 'institution_names'
+        ]
+        cols_sql = ", ".join(cols)
+        data_sql = f"SELECT {cols_sql} FROM works_flat WHERE {where_sql} ORDER BY cited_by_count DESC LIMIT {limit} OFFSET {offset}"
+        df_data = self.engine.query_df(data_sql)
+
+        records = []
+        if len(df_data) > 0:
+            for _, r in df_data.iterrows():
+                auths = r['author_names'] if isinstance(r['author_names'], list) else []
+                insts = r['institution_names'] if isinstance(r['institution_names'], list) else []
+                records.append({
+                    'id': str(r['id']).replace('https://openalex.org/', ''),
+                    'doi': str(r['doi']) if pd.notna(r['doi']) else '',
+                    'title': str(r['title']) if pd.notna(r['title']) else 'Sin título',
+                    'publication_year': int(r['publication_year']) if pd.notna(r['publication_year']) else 0,
+                    'cited_by_count': int(r['cited_by_count']) if pd.notna(r['cited_by_count']) else 0,
+                    'fwci': float(r['fwci']) if pd.notna(r['fwci']) else 0.0,
+                    'is_oa': bool(r['is_oa']),
+                    'oa_status': str(r['oa_status']) if pd.notna(r['oa_status']) else 'closed',
+                    'source_id': str(r['source_id']).replace('https://openalex.org/', '') if pd.notna(r['source_id']) else '',
+                    'topic': str(r['topic']) if pd.notna(r['topic']) else '',
+                    'field': str(r['field']) if pd.notna(r['field']) else '',
+                    'authors': auths[:4],
+                    'institutions': insts[:3]
+                })
+
+        return {
+            'total': total_works,
+            'limit': limit,
+            'offset': offset,
+            'page': (offset // limit) + 1 if limit > 0 else 1,
+            'total_pages': (total_works + limit - 1) // limit if limit > 0 else 1,
+            'results': records
+        }
+
+    def from_filters(self, filters: Dict[str, Any], limit: Optional[int] = None) -> pd.DataFrame:
+        clauses = self._build_where_clauses(filters)
+        where_sql = " AND ".join(clauses) if clauses else "1=1"
+        limit_sql = f" LIMIT {int(limit)}" if limit and int(limit) > 0 else ""
+        query = f"SELECT * FROM works_flat WHERE {where_sql} ORDER BY cited_by_count DESC{limit_sql}"
         df = self.engine.query_df(query)
         return self._normalize_dataframe(df)
 

@@ -23,6 +23,7 @@ CH_DATABASE = os.getenv('CH_DATABASE', 'rag')
 CH_CHUNK_SIZE = int(os.getenv('CH_CHUNK_SIZE', '5000'))
 CH_QUERY_TIMEOUT = int(os.getenv('CH_QUERY_TIMEOUT', '300'))
 CH_MAX_THREADS = int(os.getenv('CH_MAX_THREADS', '4'))
+OPENALEX_LOCAL_API = os.getenv('OPENALEX_LOCAL_API', 'http://localhost:5012')
 
 DATA_DIR = BASE_DIR / 'data'
 CACHE_DIR = DATA_DIR / 'cache'

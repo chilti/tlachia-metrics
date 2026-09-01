@@ -69,7 +69,8 @@ class TlachIAMetricsEngine:
                                    output_dir: Optional[Union[str, Path]] = None,
                                    export_parquet: bool = True,
                                    export_json: bool = True,
-                                   raw_json_source: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+                                   raw_json_source: Optional[Union[str, Path]] = None,
+                                   progress_callback: Optional[Any] = None) -> Dict[str, Any]:
         """
         Ejecuta el pipeline completo:
         1. Calcula indicadores para todas las 16 entidades (Histórico, 2021-2025 y Trend).
@@ -80,6 +81,9 @@ class TlachIAMetricsEngine:
         """
         if df is None or len(df) == 0:
             raise ValueError('El DataFrame del corpus está vacío.')
+
+        if progress_callback:
+            progress_callback(10, 'Iniciando estructuración de carpetas y carga de entidades...')
 
         out_d = Path(output_dir or (EXPORTS_DIR / package_name))
         excel_dir = out_d / 'excel_reports'
@@ -112,7 +116,12 @@ class TlachIAMetricsEngine:
         package_files_to_zip = []
         tables_summary = {}
 
-        for entity_label, agg in aggregators_map.items():
+        total_aggs = len(aggregators_map)
+        for idx, (entity_label, agg) in enumerate(aggregators_map.items(), start=1):
+            pct = 15 + int((idx / total_aggs) * 65)
+            if progress_callback:
+                progress_callback(pct, f'Calculando indicadores: {entity_label} ({idx}/{total_aggs})...')
+            
             logger.info(f'Calculando {entity_label}...')
             
             # 1. Histórico Completo
@@ -148,15 +157,15 @@ class TlachIAMetricsEngine:
         # 4. Exportar el archivo JSON completo de registros
         json_file_path = None
         if export_json:
+            if progress_callback:
+                progress_callback(85, 'Exportando archivo JSON consolidado del corpus...')
             json_file_path = out_d / f'{package_name}_openalex_works.json'
             logger.info(f'Exportando archivo JSON completo del corpus a: {json_file_path}')
             
             if raw_json_source and Path(raw_json_source).exists() and str(raw_json_source).endswith('.json'):
-                # Copiar archivo en binario sin intentar chmod (compatible con sistemas de archivos montados)
                 with open(raw_json_source, 'rb') as src_f, open(json_file_path, 'wb') as dst_f:
                     dst_f.write(src_f.read())
             else:
-                # Serializar el DataFrame completo con tipos limpios
                 records = df.to_dict(orient='records')
                 with open(json_file_path, 'w', encoding='utf-8') as jf:
                     json.dump(records, jf, cls=JSONCustomEncoder, ensure_ascii=False, indent=2)
@@ -164,9 +173,14 @@ class TlachIAMetricsEngine:
             package_files_to_zip.append(json_file_path)
 
         # 5. Empaquetado unificado en un solo archivo .zip
+        if progress_callback:
+            progress_callback(92, 'Generando archivo .ZIP unificado...')
         zip_path = out_d / f'{package_name}.zip'
         create_unified_indicators_zip(package_files_to_zip, zip_path)
         logger.info(f'Paquete unificado generado con éxito en: {zip_path}')
+
+        if progress_callback:
+            progress_callback(100, '¡Proceso completado exitosamente!')
 
         return {
             'package_name': package_name,

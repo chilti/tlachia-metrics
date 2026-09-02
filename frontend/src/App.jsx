@@ -29,7 +29,8 @@ import {
   Calendar,
   Database,
   Library,
-  Check
+  Check,
+  FileText
 } from 'lucide-react'
 
 const API_BASE = ''
@@ -49,6 +50,7 @@ export default function App() {
   const [authorLogic, setAuthorLogic] = useState('OR')
   const [selectedCountries, setSelectedCountries] = useState([])
   const [countryLogic, setCountryLogic] = useState('OR')
+  const [selectedTypes, setSelectedTypes] = useState([])
   const [startYear, setStartYear] = useState(2015)
   const [endYear, setEndYear] = useState(2026)
   const [allYears, setAllYears] = useState(false)
@@ -117,6 +119,7 @@ export default function App() {
         author_logic: authorLogic,
         country_codes: selectedCountries.map(c => c.code || c.id),
         country_logic: countryLogic,
+        work_types: selectedTypes.map(t => t.id || t.type_id),
         start_year: allYears ? 1900 : startYear,
         end_year: allYears ? 2026 : endYear,
         oa_status: oaStatus !== 'all' ? oaStatus : undefined,
@@ -197,10 +200,11 @@ export default function App() {
           source: 'sources',
           institution: 'institutions',
           author: 'authors',
-          country: 'countries'
+          country: 'countries',
+          work_type: 'work_types'
         }
         const res = await axios.get('/api/entities/search', {
-          params: { type: typeMap[modalEntity], q: entitySearchQuery, limit: 12 }
+          params: { type: typeMap[modalEntity], q: entitySearchQuery, limit: 20 }
         })
         setEntityResults(res.data.results || [])
       } catch (err) {
@@ -224,6 +228,8 @@ export default function App() {
       setSelectedAuthors(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
     } else if (modalEntity === 'country') {
       setSelectedCountries(prev => prev.some(x => (x.code || x.id) === (item.code || item.id)) ? prev : [...prev, item])
+    } else if (modalEntity === 'work_type') {
+      setSelectedTypes(prev => prev.some(x => (x.id || x.type_id) === (item.id || item.type_id)) ? prev : [...prev, item])
     }
     setModalEntity(null)
     setEntitySearchQuery('')
@@ -248,6 +254,7 @@ export default function App() {
         author_logic: authorLogic,
         country_codes: selectedCountries.map(c => c.code || c.id),
         country_logic: countryLogic,
+        work_types: selectedTypes.map(t => t.id || t.type_id),
         start_year: allYears ? 1900 : startYear,
         end_year: allYears ? 2026 : endYear,
         oa_status: oaStatus !== 'all' ? oaStatus : undefined
@@ -743,6 +750,31 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Document Types Multiselect Catalog */}
+                  <div className="filter-group">
+                    <label className="filter-label">Tipo de Documento (Catálogo)</label>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                      onClick={() => setModalEntity('work_type')}
+                    >
+                      <FileText size={16} color="#fb7185" />
+                      + Tipo de Documento ({selectedTypes.length})
+                    </button>
+                    {selectedTypes.length > 0 && (
+                      <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {selectedTypes.map(t => (
+                          <span key={t.id || t.type_id} className="chip" style={{ fontSize: '0.74rem', padding: '3px 8px' }}>
+                            <span>{t.flag || '📄'} {t.type_name || t.name}</span>
+                            <button className="chip-remove" onClick={() => setSelectedTypes(prev => prev.filter(x => (x.id || x.type_id) !== (t.id || t.type_id)))}>
+                              <X size={11} />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Open Access Status */}
                   <div className="filter-group">
                     <label className="filter-label">Vía de Acceso Abierto</label>
@@ -877,7 +909,7 @@ export default function App() {
                   </div>
 
                   {/* Active Chips Bar */}
-                  {(selectedTopics.length > 0 || selectedSources.length > 0 || selectedInstitutions.length > 0 || selectedAuthors.length > 0 || selectedCountries.length > 0 || oaStatus !== 'all') && (
+                  {(selectedTopics.length > 0 || selectedSources.length > 0 || selectedInstitutions.length > 0 || selectedAuthors.length > 0 || selectedCountries.length > 0 || selectedTypes.length > 0 || oaStatus !== 'all') && (
                     <div className="chips-container">
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', alignSelf: 'center' }}>Filtros activos:</span>
                       {selectedTopics.map(t => (
@@ -920,6 +952,13 @@ export default function App() {
                           Lógica: {countryLogic}
                         </span>
                       )}
+                      {selectedTypes.map(t => (
+                        <div key={t.id || t.type_id} className="chip">
+                          <FileText size={13} color="#fb7185" />
+                          <span>Tipo: <strong>{t.flag || '📄'} {t.type_name || t.name}</strong></span>
+                          <button className="chip-remove" onClick={() => setSelectedTypes(prev => prev.filter(x => (x.id || x.type_id) !== (t.id || t.type_id)))}><X size={12} /></button>
+                        </div>
+                      ))}
                       {oaStatus !== 'all' && (
                         <div className="chip">
                           <Unlock size={13} color="#34d399" />
@@ -1109,6 +1148,15 @@ export default function App() {
                         </div>
 
                         <div>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Tipo de Documento</span>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
+                            {selectedTypes.length === 0
+                              ? 'Todos los tipos'
+                              : selectedTypes.map(t => `${t.flag || ''} ${t.type_name || t.name}`).join(', ')}
+                          </div>
+                        </div>
+
+                        <div>
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Alcance del Cálculo</span>
                           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#34d399', marginTop: '2px' }}>
                             100% Corpus Completo ({previewData.total.toLocaleString()} arts)
@@ -1230,6 +1278,7 @@ export default function App() {
                 {modalEntity === 'institution' && <Building2 size={22} color="#34d399" />}
                 {modalEntity === 'author' && <Users size={22} color="#a78bfa" />}
                 {modalEntity === 'country' && <Globe2 size={22} color="#38bdf8" />}
+                {modalEntity === 'work_type' && <FileText size={22} color="#fb7185" />}
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
                   {modalEntity === 'topic'
                     ? 'Buscar Tópico'
@@ -1239,7 +1288,9 @@ export default function App() {
                     ? 'Buscar Institución'
                     : modalEntity === 'author'
                     ? 'Buscar Investigador'
-                    : 'Seleccionar País (Catálogo Oficial)'}
+                    : modalEntity === 'country'
+                    ? 'Seleccionar País (Catálogo Oficial)'
+                    : 'Seleccionar Tipo de Documento (OpenAlex)'}
                 </h3>
               </div>
               <button
@@ -1259,6 +1310,8 @@ export default function App() {
                 placeholder={
                   modalEntity === 'country'
                     ? 'Escribe el nombre del país (ej. México, España) o código ISO (MX, US)...'
+                    : modalEntity === 'work_type'
+                    ? 'Escribe tipo de documento (ej. Artículo, Libro, Preprint, Tesis, Dataset)...'
                     : `Escribe el nombre del ${modalEntity}...`
                 }
                 value={entitySearchQuery}

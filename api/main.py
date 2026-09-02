@@ -83,9 +83,58 @@ async def search_entities(request: Request):
         'authors': 'authors',
         'author': 'authors',
         'countries': 'countries',
-        'country': 'countries'
+        'country': 'countries',
+        'types': 'work_types',
+        'type': 'work_types',
+        'work_types': 'work_types',
+        'work_type': 'work_types'
     }
     normalized_type = valid_types.get(entity_type, 'topics')
+
+    if normalized_type == 'work_types':
+        WORK_TYPES_CATALOG = [
+            {"id": "article", "name": "Artículo de Revista (Journal Article)", "type_name": "Artículo de Revista", "flag": "📄", "works_count": 191850783},
+            {"id": "dataset", "name": "Conjunto de Datos (Dataset)", "type_name": "Conjunto de Datos", "flag": "📊", "works_count": 58720955},
+            {"id": "other", "name": "Otro / Misceláneo (Other)", "type_name": "Otro / Misceláneo", "flag": "📁", "works_count": 54804373},
+            {"id": "book-chapter", "name": "Capítulo de Libro (Book Chapter)", "type_name": "Capítulo de Libro", "flag": "📑", "works_count": 18024570},
+            {"id": "dissertation", "name": "Tesis / Disertación Doctoral (Dissertation)", "type_name": "Tesis / Disertación", "flag": "🎓", "works_count": 7568954},
+            {"id": "book", "name": "Libro Completo (Book)", "type_name": "Libro", "flag": "📚", "works_count": 6242037},
+            {"id": "preprint", "name": "Preprint (Manuscrito Previo)", "type_name": "Preprint", "flag": "📝", "works_count": 5965389},
+            {"id": "review", "name": "Artículo de Revisión (Review Article)", "type_name": "Artículo de Revisión", "flag": "🔍", "works_count": 3008809},
+            {"id": "paratext", "name": "Paratexto / Índices / Prefacio (Paratext)", "type_name": "Paratexto", "flag": "📰", "works_count": 2805841},
+            {"id": "report", "name": "Informe Técnico / Reporte (Report)", "type_name": "Informe Técnico", "flag": "📋", "works_count": 1547890},
+            {"id": "letter", "name": "Carta al Editor / Comunicación (Letter)", "type_name": "Carta / Comunicación", "flag": "✉️", "works_count": 1262759},
+            {"id": "peer-review", "name": "Revisión por Pares (Peer Review)", "type_name": "Revisión por Pares", "flag": "✍️", "works_count": 789736},
+            {"id": "libguides", "name": "Guía de Biblioteca (LibGuide)", "type_name": "Guía de Biblioteca", "flag": "🏷️", "works_count": 711587},
+            {"id": "reference-entry", "name": "Entrada de Referencia / Enciclopedia", "type_name": "Entrada de Referencia", "flag": "📖", "works_count": 648251},
+            {"id": "editorial", "name": "Editorial / Nota del Editor", "type_name": "Editorial", "flag": "✒️", "works_count": 602036},
+            {"id": "standard", "name": "Norma / Estándar Técnico (Standard)", "type_name": "Estándar Técnico", "flag": "📏", "works_count": 292985},
+            {"id": "erratum", "name": "Fe de Erratas / Corrección (Erratum)", "type_name": "Fe de Erratas", "flag": "⚠️", "works_count": 292534},
+            {"id": "supplementary-materials", "name": "Material Suplementario", "type_name": "Material Suplementario", "flag": "📎", "works_count": 61363},
+            {"id": "retraction", "name": "Retracción de Obra (Retraction)", "type_name": "Retracción", "flag": "🚫", "works_count": 17853},
+            {"id": "software", "name": "Software / Código Científico", "type_name": "Software / Código", "flag": "💻", "works_count": 8633},
+            {"id": "database", "name": "Base de Datos (Database)", "type_name": "Base de Datos", "flag": "🗄️", "works_count": 1708},
+            {"id": "book-section", "name": "Sección de Libro (Book Section)", "type_name": "Sección de Libro", "flag": "📕", "works_count": 1190},
+            {"id": "report-component", "name": "Componente de Informe", "type_name": "Componente de Informe", "flag": "🧩", "works_count": 618},
+            {"id": "grant", "name": "Subvención / Concesión (Grant)", "type_name": "Subvención", "flag": "💰", "works_count": 102}
+        ]
+        q_clean = query.strip().lower()
+        matches = [
+            {
+                'id': t['id'],
+                'full_id': t['id'],
+                'name': f"{t['flag']} {t['name']}",
+                'type': 'work_types',
+                'type_id': t['id'],
+                'type_name': t['type_name'],
+                'flag': t['flag'],
+                'works_count': t['works_count'],
+                'extra': {'works_count': t['works_count']}
+            }
+            for t in WORK_TYPES_CATALOG
+            if q_clean in t['id'].lower() or q_clean in t['name'].lower() or q_clean in t['type_name'].lower()
+        ]
+        return JSONResponse({'results': matches[:limit]})
 
     if normalized_type == 'countries':
         COUNTRIES_CATALOG = [

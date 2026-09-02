@@ -367,6 +367,19 @@ class CorpusBuilder:
                 quoted_codes = ", ".join(f"'{c}'" for c in country_codes)
                 clauses.append(f"(country_code IN ({quoted_codes}) OR hasAny(country_codes, [{quoted_codes}]) OR hasAny(all_country_codes, [{quoted_codes}]))")
 
+        # Tipos de Documento (work_types)
+        w_types = filters.get('work_types') or filters.get('types') or []
+        if isinstance(w_types, str):
+            w_types = [t.strip() for t in w_types.split(',') if t.strip()]
+        single_type = filters.get('type') or filters.get('work_type')
+        if single_type and single_type not in w_types:
+            w_types.append(single_type)
+
+        w_types = [str(t).strip().lower() for t in w_types if str(t).strip() and str(t).lower() not in ('all', 'todos', 'any', '')]
+        if w_types:
+            quoted_types = ", ".join(f"'{t}'" for t in w_types)
+            clauses.append(f"lower(type) IN ({quoted_types})")
+
         # Acceso Abierto
         is_oa = filters.get('is_oa')
         if is_oa is not None:

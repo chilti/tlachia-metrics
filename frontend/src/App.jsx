@@ -53,7 +53,6 @@ export default function App() {
   const [endYear, setEndYear] = useState(2026)
   const [allYears, setAllYears] = useState(false)
   const [oaStatus, setOaStatus] = useState('all')
-  const [limit, setLimit] = useState(250)
 
   // Direct IDs / DOIs State
   const [idsText, setIdsText] = useState('')
@@ -251,8 +250,7 @@ export default function App() {
         country_logic: countryLogic,
         start_year: allYears ? 1900 : startYear,
         end_year: allYears ? 2026 : endYear,
-        oa_status: oaStatus !== 'all' ? oaStatus : undefined,
-        limit: limit > 0 ? limit : undefined
+        oa_status: oaStatus !== 'all' ? oaStatus : undefined
       }
     } else if (searchMode === 'ids') {
       const lines = idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
@@ -763,23 +761,6 @@ export default function App() {
                     </select>
                   </div>
 
-                  {/* Max Works Limit */}
-                  <div className="filter-group">
-                    <label className="filter-label">Límite para Cálculo</label>
-                    <select
-                      className="select-custom"
-                      value={limit}
-                      onChange={(e) => setLimit(parseInt(e.target.value))}
-                    >
-                      <option value={100}>100 artículos (Rápido)</option>
-                      <option value={250}>250 artículos (Estándar)</option>
-                      <option value={500}>500 artículos</option>
-                      <option value={1000}>1,000 artículos</option>
-                      <option value={5000}>5,000 artículos</option>
-                      <option value={0}>Sin límite (Todo el corpus)</option>
-                    </select>
-                  </div>
-
                   {/* Search Button in Sidebar */}
                   <button
                     className="btn btn-primary"
@@ -974,9 +955,7 @@ export default function App() {
                     </span>
                   </div>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    {limit > 0 && previewData.total > limit
-                      ? `Se procesarán los primeros ${limit.toLocaleString()} artículos más citados.`
-                      : `Se calcularán los 48 libros Excel con indicadores analíticos completos.`}
+                    Se procesará la totalidad del corpus ({previewData.total.toLocaleString()} artículos) para generar los 48 libros Excel con indicadores analíticos completos.
                   </p>
                 </div>
 
@@ -1130,9 +1109,9 @@ export default function App() {
                         </div>
 
                         <div>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Límite para Métricas</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Alcance del Cálculo</span>
                           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#34d399', marginTop: '2px' }}>
-                            {limit > 0 && previewData.total > limit ? `Top ${limit.toLocaleString()} citados` : `Completo (${previewData.total.toLocaleString()})`}
+                            100% Corpus Completo ({previewData.total.toLocaleString()} arts)
                           </div>
                         </div>
                       </div>

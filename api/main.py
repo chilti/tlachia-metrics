@@ -81,9 +81,79 @@ async def search_entities(request: Request):
         'institutions': 'institutions',
         'institution': 'institutions',
         'authors': 'authors',
-        'author': 'authors'
+        'author': 'authors',
+        'countries': 'countries',
+        'country': 'countries'
     }
     normalized_type = valid_types.get(entity_type, 'topics')
+
+    if normalized_type == 'countries':
+        COUNTRIES_CATALOG = [
+            {"code": "MX", "name": "México", "name_en": "Mexico", "flag": "🇲🇽"},
+            {"code": "US", "name": "Estados Unidos", "name_en": "United States", "flag": "🇺🇸"},
+            {"code": "ES", "name": "España", "name_en": "Spain", "flag": "🇪🇸"},
+            {"code": "CO", "name": "Colombia", "name_en": "Colombia", "flag": "🇨🇴"},
+            {"code": "AR", "name": "Argentina", "name_en": "Argentina", "flag": "🇦🇷"},
+            {"code": "BR", "name": "Brasil", "name_en": "Brazil", "flag": "🇧🇷"},
+            {"code": "CL", "name": "Chile", "name_en": "Chile", "flag": "🇨🇱"},
+            {"code": "PE", "name": "Perú", "name_en": "Peru", "flag": "🇵🇪"},
+            {"code": "EC", "name": "Ecuador", "name_en": "Ecuador", "flag": "🇪🇨"},
+            {"code": "CU", "name": "Cuba", "name_en": "Cuba", "flag": "🇨🇺"},
+            {"code": "VE", "name": "Venezuela", "name_en": "Venezuela", "flag": "🇻🇪"},
+            {"code": "UY", "name": "Uruguay", "name_en": "Uruguay", "flag": "🇺🇾"},
+            {"code": "CR", "name": "Costa Rica", "name_en": "Costa Rica", "flag": "🇨🇷"},
+            {"code": "PA", "name": "Panamá", "name_en": "Panama", "flag": "🇵🇦"},
+            {"code": "GT", "name": "Guatemala", "name_en": "Guatemala", "flag": "🇬🇹"},
+            {"code": "DO", "name": "República Dominicana", "name_en": "Dominican Republic", "flag": "🇩🇴"},
+            {"code": "BO", "name": "Bolivia", "name_en": "Bolivia", "flag": "🇧🇴"},
+            {"code": "PY", "name": "Paraguay", "name_en": "Paraguay", "flag": "🇵🇾"},
+            {"code": "HN", "name": "Honduras", "name_en": "Honduras", "flag": "🇭🇳"},
+            {"code": "SV", "name": "El Salvador", "name_en": "El Salvador", "flag": "🇸🇻"},
+            {"code": "NI", "name": "Nicaragua", "name_en": "Nicaragua", "flag": "🇳🇮"},
+            {"code": "PR", "name": "Puerto Rico", "name_en": "Puerto Rico", "flag": "🇵🇷"},
+            {"code": "CA", "name": "Canadá", "name_en": "Canada", "flag": "🇨🇦"},
+            {"code": "GB", "name": "Reino Unido", "name_en": "United Kingdom", "flag": "🇬🇧"},
+            {"code": "FR", "name": "Francia", "name_en": "France", "flag": "🇫🇷"},
+            {"code": "DE", "name": "Alemania", "name_en": "Germany", "flag": "🇩🇪"},
+            {"code": "IT", "name": "Italia", "name_en": "Italy", "flag": "🇮🇹"},
+            {"code": "PT", "name": "Portugal", "name_en": "Portugal", "flag": "🇵🇹"},
+            {"code": "NL", "name": "Países Bajos", "name_en": "Netherlands", "flag": "🇳🇱"},
+            {"code": "CH", "name": "Suiza", "name_en": "Switzerland", "flag": "🇨🇭"},
+            {"code": "SE", "name": "Suecia", "name_en": "Sweden", "flag": "🇸🇪"},
+            {"code": "BE", "name": "Bélgica", "name_en": "Belgium", "flag": "🇧🇪"},
+            {"code": "CN", "name": "China", "name_en": "China", "flag": "🇨🇳"},
+            {"code": "JP", "name": "Japón", "name_en": "Japan", "flag": "🇯🇵"},
+            {"code": "IN", "name": "India", "name_en": "India", "flag": "🇮🇳"},
+            {"code": "AU", "name": "Australia", "name_en": "Australia", "flag": "🇦🇺"},
+            {"code": "KR", "name": "Corea del Sur", "name_en": "South Korea", "flag": "🇰🇷"},
+            {"code": "ZA", "name": "Sudáfrica", "name_en": "South Africa", "flag": "🇿🇦"},
+            {"code": "RU", "name": "Rusia", "name_en": "Russia", "flag": "🇷🇺"},
+            {"code": "IL", "name": "Israel", "name_en": "Israel", "flag": "🇮🇱"},
+            {"code": "SG", "name": "Singapur", "name_en": "Singapore", "flag": "🇸🇬"},
+            {"code": "NZ", "name": "Nueva Zelanda", "name_en": "New Zealand", "flag": "🇳🇿"},
+            {"code": "NO", "name": "Noruega", "name_en": "Norway", "flag": "🇳🇴"},
+            {"code": "DK", "name": "Dinamarca", "name_en": "Denmark", "flag": "🇩🇰"},
+            {"code": "FI", "name": "Finlandia", "name_en": "Finland", "flag": "🇫🇮"},
+            {"code": "IE", "name": "Irlanda", "name_en": "Ireland", "flag": "🇮🇪"},
+            {"code": "AT", "name": "Austria", "name_en": "Austria", "flag": "🇦🇹"},
+            {"code": "PL", "name": "Polonia", "name_en": "Poland", "flag": "🇵🇱"}
+        ]
+        q_clean = query.strip().lower()
+        matches = [
+            {
+                'id': c['code'],
+                'full_id': c['code'],
+                'name': f"{c['flag']} {c['name']} ({c['code']})",
+                'type': 'countries',
+                'code': c['code'],
+                'flag': c['flag'],
+                'country_name': c['name'],
+                'extra': {'code': c['code'], 'flag': c['flag']}
+            }
+            for c in COUNTRIES_CATALOG
+            if q_clean == c['code'].lower() or q_clean in c['name'].lower() or q_clean in c['name_en'].lower()
+        ]
+        return JSONResponse({'results': matches[:limit]})
 
     # Intento 1: API REST OpenAlex Local
     try:

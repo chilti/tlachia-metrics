@@ -38,17 +38,21 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('builder') // 'builder' | 'downloads'
   const [searchMode, setSearchMode] = useState('filters') // 'filters' | 'ids' | 'upload'
 
-  // Filters State
+  // Filters State (Cumulative Multiselect)
   const [query, setQuery] = useState('')
-  const [selectedTopic, setSelectedTopic] = useState(null)
-  const [selectedSource, setSelectedSource] = useState(null)
-  const [selectedInstitution, setSelectedInstitution] = useState(null)
-  const [selectedAuthor, setSelectedAuthor] = useState(null)
+  const [selectedTopics, setSelectedTopics] = useState([])
+  const [topicLogic, setTopicLogic] = useState('OR')
+  const [selectedSources, setSelectedSources] = useState([])
+  const [selectedInstitutions, setSelectedInstitutions] = useState([])
+  const [institutionLogic, setInstitutionLogic] = useState('OR')
+  const [selectedAuthors, setSelectedAuthors] = useState([])
+  const [authorLogic, setAuthorLogic] = useState('OR')
+  const [selectedCountries, setSelectedCountries] = useState([])
+  const [countryLogic, setCountryLogic] = useState('OR')
   const [startYear, setStartYear] = useState(2015)
   const [endYear, setEndYear] = useState(2026)
   const [allYears, setAllYears] = useState(false)
   const [oaStatus, setOaStatus] = useState('all')
-  const [countryCode, setCountryCode] = useState('')
   const [limit, setLimit] = useState(250)
 
   // Direct IDs / DOIs State
@@ -60,7 +64,7 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false)
 
   // Autocomplete Modal State
-  const [modalEntity, setModalEntity] = useState(null) // 'topic' | 'source' | 'institution' | 'author'
+  const [modalEntity, setModalEntity] = useState(null) // 'topic' | 'source' | 'institution' | 'author' | 'country'
   const [entitySearchQuery, setEntitySearchQuery] = useState('')
   const [entityResults, setEntityResults] = useState([])
   const [isSearchingEntity, setIsSearchingEntity] = useState(false)
@@ -105,14 +109,18 @@ export default function App() {
       const offset = (page - 1) * pageSize
       const payload = {
         query,
-        topic_id: selectedTopic?.id,
-        source_id: selectedSource?.id,
-        institution_id: selectedInstitution?.id,
-        author_id: selectedAuthor?.id,
+        topic_ids: selectedTopics.map(t => t.id),
+        topic_logic: topicLogic,
+        source_ids: selectedSources.map(s => s.id),
+        institution_ids: selectedInstitutions.map(i => i.id),
+        institution_logic: institutionLogic,
+        author_ids: selectedAuthors.map(a => a.id),
+        author_logic: authorLogic,
+        country_codes: selectedCountries.map(c => c.code || c.id),
+        country_logic: countryLogic,
         start_year: allYears ? 1900 : startYear,
         end_year: allYears ? 2026 : endYear,
         oa_status: oaStatus !== 'all' ? oaStatus : undefined,
-        country_code: countryCode || undefined,
         limit: pageSize,
         offset
       }
@@ -131,6 +139,7 @@ export default function App() {
     const lines = idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
     if (lines.length === 0) return
     setPreviewLoading(true)
+    setHasSearched(true)
     try {
       const isDois = lines.some(l => l.startsWith('10.') || l.includes('doi.org'))
       const payload = isDois ? { dois: lines } : { work_ids: lines }
@@ -139,7 +148,7 @@ export default function App() {
         total: res.data.total,
         results: res.data.results,
         page: 1,
-        total_pages: 1
+        total_pages: Math.ceil(res.data.total / 50) || 1
       })
     } catch (err) {
       console.error('Error previewing IDs:', err)
@@ -154,6 +163,7 @@ export default function App() {
     if (!file) return
     setUploadedFile(file)
     setIsUploading(true)
+    setHasSearched(true)
     const formData = new FormData()
     formData.append('file', file)
     try {
@@ -187,7 +197,8 @@ export default function App() {
           topic: 'topics',
           source: 'sources',
           institution: 'institutions',
-          author: 'authors'
+          author: 'authors',
+          country: 'countries'
         }
         const res = await axios.get('/api/entities/search', {
           params: { type: typeMap[modalEntity], q: entitySearchQuery, limit: 12 }
@@ -198,16 +209,23 @@ export default function App() {
       } finally {
         setIsSearchingEntity(false)
       }
-    }, 300)
+    }, 250)
     return () => clearTimeout(timer)
   }, [modalEntity, entitySearchQuery])
 
   // Select Entity from Modal
   const handleSelectEntity = (item) => {
-    if (modalEntity === 'topic') setSelectedTopic(item)
-    if (modalEntity === 'source') setSelectedSource(item)
-    if (modalEntity === 'institution') setSelectedInstitution(item)
-    if (modalEntity === 'author') setSelectedAuthor(item)
+    if (modalEntity === 'topic') {
+      setSelectedTopics(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
+    } else if (modalEntity === 'source') {
+      setSelectedSources(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
+    } else if (modalEntity === 'institution') {
+      setSelectedInstitutions(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
+    } else if (modalEntity === 'author') {
+      setSelectedAuthors(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
+    } else if (modalEntity === 'country') {
+      setSelectedCountries(prev => prev.some(x => (x.code || x.id) === (item.code || item.id)) ? prev : [...prev, item])
+    }
     setModalEntity(null)
     setEntitySearchQuery('')
   }
@@ -222,14 +240,18 @@ export default function App() {
     if (searchMode === 'filters') {
       payload.filters = {
         query,
-        topic_id: selectedTopic?.id,
-        source_id: selectedSource?.id,
-        institution_id: selectedInstitution?.id,
-        author_id: selectedAuthor?.id,
+        topic_ids: selectedTopics.map(t => t.id),
+        topic_logic: topicLogic,
+        source_ids: selectedSources.map(s => s.id),
+        institution_ids: selectedInstitutions.map(i => i.id),
+        institution_logic: institutionLogic,
+        author_ids: selectedAuthors.map(a => a.id),
+        author_logic: authorLogic,
+        country_codes: selectedCountries.map(c => c.code || c.id),
+        country_logic: countryLogic,
         start_year: allYears ? 1900 : startYear,
         end_year: allYears ? 2026 : endYear,
         oa_status: oaStatus !== 'all' ? oaStatus : undefined,
-        country_code: countryCode || undefined,
         limit: limit > 0 ? limit : undefined
       }
     } else if (searchMode === 'ids') {
@@ -456,42 +478,224 @@ export default function App() {
                   <div className="filter-group">
                     <label className="filter-label">Entidades Específicas</label>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <button
-                        className="btn btn-secondary"
-                        style={{ justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                        onClick={() => setModalEntity('topic')}
-                      >
-                        <Compass size={16} color="var(--accent-primary)" />
-                        {selectedTopic ? selectedTopic.name : '+ Filtrar por Tópico'}
-                      </button>
+                      {/* Topics */}
+                      <div>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                          onClick={() => setModalEntity('topic')}
+                        >
+                          <Compass size={16} color="var(--accent-primary)" />
+                          + Filtrar por Tópico ({selectedTopics.length})
+                        </button>
+                        {selectedTopics.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                              {selectedTopics.map(t => (
+                                <span key={t.id} className="chip" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                  {t.name}
+                                  <button className="chip-remove" onClick={() => setSelectedTopics(prev => prev.filter(x => x.id !== t.id))}><X size={10} /></button>
+                                </span>
+                              ))}
+                            </div>
+                            {selectedTopics.length > 1 && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>
+                                <span>Operador:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setTopicLogic('OR')}
+                                  style={{ background: topicLogic === 'OR' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: topicLogic === 'OR' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                  OR
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setTopicLogic('AND')}
+                                  style={{ background: topicLogic === 'AND' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: topicLogic === 'AND' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                  AND
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
 
-                      <button
-                        className="btn btn-secondary"
-                        style={{ justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                        onClick={() => setModalEntity('source')}
-                      >
-                        <BookOpen size={16} color="#fbbf24" />
-                        {selectedSource ? selectedSource.name : '+ Filtrar por Revista / Fuente'}
-                      </button>
+                      {/* Sources */}
+                      <div>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                          onClick={() => setModalEntity('source')}
+                        >
+                          <BookOpen size={16} color="#fbbf24" />
+                          + Filtrar por Revista / Fuente ({selectedSources.length})
+                        </button>
+                        {selectedSources.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {selectedSources.map(s => (
+                              <span key={s.id} className="chip" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                {s.name}
+                                <button className="chip-remove" onClick={() => setSelectedSources(prev => prev.filter(x => x.id !== s.id))}><X size={10} /></button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
 
-                      <button
-                        className="btn btn-secondary"
-                        style={{ justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                        onClick={() => setModalEntity('institution')}
-                      >
-                        <Building2 size={16} color="#34d399" />
-                        {selectedInstitution ? selectedInstitution.name : '+ Filtrar por Institución'}
-                      </button>
+                      {/* Institutions */}
+                      <div>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                          onClick={() => setModalEntity('institution')}
+                        >
+                          <Building2 size={16} color="#34d399" />
+                          + Filtrar por Institución ({selectedInstitutions.length})
+                        </button>
+                        {selectedInstitutions.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                              {selectedInstitutions.map(i => (
+                                <span key={i.id} className="chip" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                  {i.name}
+                                  <button className="chip-remove" onClick={() => setSelectedInstitutions(prev => prev.filter(x => x.id !== i.id))}><X size={10} /></button>
+                                </span>
+                              ))}
+                            </div>
+                            {selectedInstitutions.length > 1 && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>
+                                <span>Operador:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setInstitutionLogic('OR')}
+                                  style={{ background: institutionLogic === 'OR' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: institutionLogic === 'OR' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                  OR (Unión)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setInstitutionLogic('AND')}
+                                  style={{ background: institutionLogic === 'AND' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: institutionLogic === 'AND' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                  AND (Co-afiliación)
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
 
-                      <button
-                        className="btn btn-secondary"
-                        style={{ justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                        onClick={() => setModalEntity('author')}
-                      >
-                        <Users size={16} color="#a78bfa" />
-                        {selectedAuthor ? selectedAuthor.name : '+ Filtrar por Investigador'}
-                      </button>
+                      {/* Authors */}
+                      <div>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                          onClick={() => setModalEntity('author')}
+                        >
+                          <Users size={16} color="#a78bfa" />
+                          + Filtrar por Investigador ({selectedAuthors.length})
+                        </button>
+                        {selectedAuthors.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                              {selectedAuthors.map(a => (
+                                <span key={a.id} className="chip" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                  {a.name}
+                                  <button className="chip-remove" onClick={() => setSelectedAuthors(prev => prev.filter(x => x.id !== a.id))}><X size={10} /></button>
+                                </span>
+                              ))}
+                            </div>
+                            {selectedAuthors.length > 1 && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>
+                                <span>Operador:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setAuthorLogic('OR')}
+                                  style={{ background: authorLogic === 'OR' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: authorLogic === 'OR' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                  OR
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setAuthorLogic('AND')}
+                                  style={{ background: authorLogic === 'AND' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: authorLogic === 'AND' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                  AND (Coautoría)
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
+                  </div>
+
+                  {/* Countries Multiselect Catalog */}
+                  <div className="filter-group">
+                    <label className="filter-label">Países de Afiliación (Catálogo)</label>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                      onClick={() => setModalEntity('country')}
+                    >
+                      <Globe2 size={16} color="#38bdf8" />
+                      + Agregar País ({selectedCountries.length})
+                    </button>
+                    {selectedCountries.length > 0 && (
+                      <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {selectedCountries.map(c => (
+                            <span key={c.code || c.id} className="chip" style={{ fontSize: '0.74rem', padding: '3px 8px' }}>
+                              <span>{c.flag || '🌐'} {c.country_name || c.name}</span>
+                              <button className="chip-remove" onClick={() => setSelectedCountries(prev => prev.filter(x => (x.code || x.id) !== (c.code || c.id)))}>
+                                <X size={11} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+
+                        {selectedCountries.length > 1 && (
+                          <div style={{ background: '#0e1526', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.72rem' }}>
+                            <span style={{ color: 'var(--text-dim)' }}>Lógica de Países:</span>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button
+                                type="button"
+                                onClick={() => setCountryLogic('OR')}
+                                style={{
+                                  background: countryLogic === 'OR' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                                  color: countryLogic === 'OR' ? '#000' : 'var(--text-muted)',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  padding: '2px 8px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 700,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                OR (Unión)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCountryLogic('AND')}
+                                style={{
+                                  background: countryLogic === 'AND' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)',
+                                  color: countryLogic === 'AND' ? '#000' : 'var(--text-muted)',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  padding: '2px 8px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 700,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                AND (Colaboración)
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Year Range */}
@@ -557,19 +761,6 @@ export default function App() {
                       <option value="hybrid">🔀 Solo Hybrid</option>
                       <option value="closed">🔒 Solo Closed</option>
                     </select>
-                  </div>
-
-                  {/* Country ISO */}
-                  <div className="filter-group">
-                    <label className="filter-label">País (Código ISO)</label>
-                    <input
-                      type="text"
-                      className="input-text"
-                      placeholder="Ej. MX, ES, CO, BR, US"
-                      maxLength={3}
-                      value={countryCode}
-                      onChange={(e) => setCountryCode(e.target.value.toUpperCase())}
-                    />
                   </div>
 
                   {/* Max Works Limit */}
@@ -705,43 +896,48 @@ export default function App() {
                   </div>
 
                   {/* Active Chips Bar */}
-                  {(selectedTopic || selectedSource || selectedInstitution || selectedAuthor || countryCode || oaStatus !== 'all') && (
+                  {(selectedTopics.length > 0 || selectedSources.length > 0 || selectedInstitutions.length > 0 || selectedAuthors.length > 0 || selectedCountries.length > 0 || oaStatus !== 'all') && (
                     <div className="chips-container">
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', alignSelf: 'center' }}>Filtros activos:</span>
-                      {selectedTopic && (
-                        <div className="chip">
+                      {selectedTopics.map(t => (
+                        <div key={t.id} className="chip">
                           <Compass size={13} color="var(--accent-primary)" />
-                          <span>Tópico: <strong>{selectedTopic.name}</strong></span>
-                          <button className="chip-remove" onClick={() => setSelectedTopic(null)}><X size={12} /></button>
+                          <span>Tópico: <strong>{t.name}</strong></span>
+                          <button className="chip-remove" onClick={() => setSelectedTopics(prev => prev.filter(x => x.id !== t.id))}><X size={12} /></button>
                         </div>
-                      )}
-                      {selectedSource && (
-                        <div className="chip">
+                      ))}
+                      {selectedSources.map(s => (
+                        <div key={s.id} className="chip">
                           <BookOpen size={13} color="#fbbf24" />
-                          <span>Revista: <strong>{selectedSource.name}</strong></span>
-                          <button className="chip-remove" onClick={() => setSelectedSource(null)}><X size={12} /></button>
+                          <span>Revista: <strong>{s.name}</strong></span>
+                          <button className="chip-remove" onClick={() => setSelectedSources(prev => prev.filter(x => x.id !== s.id))}><X size={12} /></button>
                         </div>
-                      )}
-                      {selectedInstitution && (
-                        <div className="chip">
+                      ))}
+                      {selectedInstitutions.map(i => (
+                        <div key={i.id} className="chip">
                           <Building2 size={13} color="#34d399" />
-                          <span>Institución: <strong>{selectedInstitution.name}</strong></span>
-                          <button className="chip-remove" onClick={() => setSelectedInstitution(null)}><X size={12} /></button>
+                          <span>Institución: <strong>{i.name}</strong></span>
+                          <button className="chip-remove" onClick={() => setSelectedInstitutions(prev => prev.filter(x => x.id !== i.id))}><X size={12} /></button>
                         </div>
-                      )}
-                      {selectedAuthor && (
-                        <div className="chip">
+                      ))}
+                      {selectedAuthors.map(a => (
+                        <div key={a.id} className="chip">
                           <Users size={13} color="#a78bfa" />
-                          <span>Autor: <strong>{selectedAuthor.name}</strong></span>
-                          <button className="chip-remove" onClick={() => setSelectedAuthor(null)}><X size={12} /></button>
+                          <span>Autor: <strong>{a.name}</strong></span>
+                          <button className="chip-remove" onClick={() => setSelectedAuthors(prev => prev.filter(x => x.id !== a.id))}><X size={12} /></button>
                         </div>
-                      )}
-                      {countryCode && (
-                        <div className="chip">
+                      ))}
+                      {selectedCountries.map(c => (
+                        <div key={c.code || c.id} className="chip">
                           <Globe2 size={13} color="#38bdf8" />
-                          <span>País: <strong>{countryCode}</strong></span>
-                          <button className="chip-remove" onClick={() => setCountryCode('')}><X size={12} /></button>
+                          <span>País: <strong>{c.flag || ''} {c.country_name || c.name}</strong></span>
+                          <button className="chip-remove" onClick={() => setSelectedCountries(prev => prev.filter(x => (x.code || x.id) !== (c.code || c.id)))}><X size={12} /></button>
                         </div>
+                      ))}
+                      {selectedCountries.length > 1 && (
+                        <span style={{ fontSize: '0.7rem', background: 'rgba(56, 189, 248, 0.15)', color: 'var(--accent-primary)', padding: '2px 8px', borderRadius: '4px', fontWeight: 700, alignSelf: 'center' }}>
+                          Lógica: {countryLogic}
+                        </span>
                       )}
                       {oaStatus !== 'all' && (
                         <div className="chip">
@@ -925,9 +1121,11 @@ export default function App() {
                         </div>
 
                         <div>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>País / Territorio</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Países de Afiliación</span>
                           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
-                            {countryCode || 'Global (Sin filtro)'}
+                            {selectedCountries.length === 0
+                              ? 'Global (Sin filtro)'
+                              : `${selectedCountries.map(c => `${c.flag || ''} ${c.code || c.name}`).join(', ')} (${countryLogic})`}
                           </div>
                         </div>
 
@@ -1052,8 +1250,17 @@ export default function App() {
                 {modalEntity === 'source' && <BookOpen size={22} color="#fbbf24" />}
                 {modalEntity === 'institution' && <Building2 size={22} color="#34d399" />}
                 {modalEntity === 'author' && <Users size={22} color="#a78bfa" />}
+                {modalEntity === 'country' && <Globe2 size={22} color="#38bdf8" />}
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-                  Buscar {modalEntity === 'topic' ? 'Tópico' : modalEntity === 'source' ? 'Revista / Fuente' : modalEntity === 'institution' ? 'Institución' : 'Investigador'}
+                  {modalEntity === 'topic'
+                    ? 'Buscar Tópico'
+                    : modalEntity === 'source'
+                    ? 'Buscar Revista / Fuente'
+                    : modalEntity === 'institution'
+                    ? 'Buscar Institución'
+                    : modalEntity === 'author'
+                    ? 'Buscar Investigador'
+                    : 'Seleccionar País (Catálogo Oficial)'}
                 </h3>
               </div>
               <button
@@ -1070,7 +1277,11 @@ export default function App() {
                 type="text"
                 autoFocus
                 className="search-input"
-                placeholder={`Escribe el nombre del ${modalEntity}...`}
+                placeholder={
+                  modalEntity === 'country'
+                    ? 'Escribe el nombre del país (ej. México, España) o código ISO (MX, US)...'
+                    : `Escribe el nombre del ${modalEntity}...`
+                }
                 value={entitySearchQuery}
                 onChange={(e) => setEntitySearchQuery(e.target.value)}
               />
@@ -1080,7 +1291,7 @@ export default function App() {
               {isSearchingEntity ? (
                 <div style={{ textAlign: 'center', padding: '30px' }}>
                   <Loader2 size={24} className="animate-spin" style={{ margin: '0 auto 8px', color: 'var(--accent-primary)' }} />
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Buscando en OpenAlex...</p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Buscando en catálogo...</p>
                 </div>
               ) : entityResults.length === 0 ? (
                 <p style={{ textAlign: 'center', padding: '30px', color: 'var(--text-dim)', fontSize: '0.85rem' }}>
@@ -1108,7 +1319,9 @@ export default function App() {
                     <div>
                       <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>{item.name}</div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                        ID: {item.id} {item.extra?.field && `• ${item.extra.field}`} {item.extra?.country_code && `• ${item.extra.country_code}`}
+                        {item.type === 'countries'
+                          ? `Código ISO: ${item.code || item.id}`
+                          : `ID: ${item.id} ${item.extra?.field ? `• ${item.extra.field}` : ''} ${item.extra?.country_code ? `• ${item.extra.country_code}` : ''}`}
                       </div>
                     </div>
                     <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>

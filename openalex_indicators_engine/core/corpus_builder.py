@@ -278,35 +278,94 @@ class CorpusBuilder:
             clean_q = str(query).strip().replace("'", "\\'")
             clauses.append(f"positionCaseInsensitiveUTF8(title, '{clean_q}') > 0")
 
-        # Tópico
-        topic_id = filters.get('topic_id')
-        if topic_id:
-            t_id = str(topic_id).split('/')[-1].strip()
-            clauses.append(f"(topic_id = '{t_id}' OR topic_id = 'https://openalex.org/{t_id}' OR primary_topic_id = '{t_id}' OR primary_topic_id = 'https://openalex.org/{t_id}' OR has(all_topics, '{t_id}') OR has(all_topics, 'https://openalex.org/{t_id}'))")
+        # Tópicos (Múltiples con OR / AND)
+        t_ids = filters.get('topic_ids') or []
+        if isinstance(t_ids, str):
+            t_ids = [t.strip() for t in t_ids.split(',') if t.strip()]
+        single_topic = filters.get('topic_id')
+        if single_topic and single_topic not in t_ids:
+            t_ids.append(single_topic)
 
-        # Revista / Fuente
-        source_id = filters.get('source_id')
-        if source_id:
-            s_id = str(source_id).split('/')[-1].strip()
-            clauses.append(f"(source_id = '{s_id}' OR source_id = 'https://openalex.org/{s_id}')")
+        t_ids = [str(t).split('/')[-1].strip() for t in t_ids if str(t).strip()]
+        if t_ids:
+            t_logic = str(filters.get('topic_logic', 'OR')).strip().upper()
+            if t_logic == 'AND':
+                and_clauses = [f"(topic_id = '{t}' OR topic_id = 'https://openalex.org/{t}' OR primary_topic_id = '{t}' OR primary_topic_id = 'https://openalex.org/{t}' OR has(all_topics, '{t}') OR has(all_topics, 'https://openalex.org/{t}'))" for t in t_ids]
+                clauses.append(f"({' AND '.join(and_clauses)})")
+            else:
+                quoted = ", ".join(f"'{t}'" for t in t_ids)
+                quoted_urls = ", ".join(f"'https://openalex.org/{t}'" for t in t_ids)
+                clauses.append(f"(topic_id IN ({quoted}) OR topic_id IN ({quoted_urls}) OR primary_topic_id IN ({quoted}) OR primary_topic_id IN ({quoted_urls}) OR hasAny(all_topics, [{quoted}]) OR hasAny(all_topics, [{quoted_urls}]))")
 
-        # Institución / ROR
-        institution_id = filters.get('institution_id')
-        if institution_id:
-            i_id = str(institution_id).split('/')[-1].strip()
-            clauses.append(f"(has(institution_ids, '{i_id}') OR has(institution_ids, 'https://openalex.org/{i_id}') OR has(institution_rors, '{i_id}'))")
+        # Revistas / Fuentes (Múltiples con OR)
+        s_ids = filters.get('source_ids') or []
+        if isinstance(s_ids, str):
+            s_ids = [s.strip() for s in s_ids.split(',') if s.strip()]
+        single_source = filters.get('source_id')
+        if single_source and single_source not in s_ids:
+            s_ids.append(single_source)
 
-        # Autor / Investigador
-        author_id = filters.get('author_id')
-        if author_id:
-            a_id = str(author_id).split('/')[-1].strip()
-            clauses.append(f"(has(author_ids, '{a_id}') OR has(author_ids, 'https://openalex.org/{a_id}'))")
+        s_ids = [str(s).split('/')[-1].strip() for s in s_ids if str(s).strip()]
+        if s_ids:
+            quoted = ", ".join(f"'{s}'" for s in s_ids)
+            quoted_urls = ", ".join(f"'https://openalex.org/{s}'" for s in s_ids)
+            clauses.append(f"(source_id IN ({quoted}) OR source_id IN ({quoted_urls}))")
 
-        # País
-        country_code = filters.get('country_code')
-        if country_code:
-            c_code = str(country_code).strip().upper()
-            clauses.append(f"(country_code = '{c_code}' OR has(country_codes, '{c_code}') OR has(all_country_codes, '{c_code}'))")
+        # Institución / ROR (Múltiples con OR / AND)
+        inst_ids = filters.get('institution_ids') or []
+        if isinstance(inst_ids, str):
+            inst_ids = [i.strip() for i in inst_ids.split(',') if i.strip()]
+        single_inst = filters.get('institution_id')
+        if single_inst and single_inst not in inst_ids:
+            inst_ids.append(single_inst)
+
+        inst_ids = [str(i).split('/')[-1].strip() for i in inst_ids if str(i).strip()]
+        if inst_ids:
+            inst_logic = str(filters.get('institution_logic', 'OR')).strip().upper()
+            if inst_logic == 'AND':
+                and_clauses = [f"(has(institution_ids, '{i}') OR has(institution_ids, 'https://openalex.org/{i}') OR has(institution_rors, '{i}'))" for i in inst_ids]
+                clauses.append(f"({' AND '.join(and_clauses)})")
+            else:
+                quoted = ", ".join(f"'{i}'" for i in inst_ids)
+                quoted_urls = ", ".join(f"'https://openalex.org/{i}'" for i in inst_ids)
+                clauses.append(f"(hasAny(institution_ids, [{quoted}]) OR hasAny(institution_ids, [{quoted_urls}]) OR hasAny(institution_rors, [{quoted}]))")
+
+        # Autores / Investigadores (Múltiples con OR / AND)
+        a_ids = filters.get('author_ids') or []
+        if isinstance(a_ids, str):
+            a_ids = [a.strip() for a in a_ids.split(',') if a.strip()]
+        single_author = filters.get('author_id')
+        if single_author and single_author not in a_ids:
+            a_ids.append(single_author)
+
+        a_ids = [str(a).split('/')[-1].strip() for a in a_ids if str(a).strip()]
+        if a_ids:
+            a_logic = str(filters.get('author_logic', 'OR')).strip().upper()
+            if a_logic == 'AND':
+                and_clauses = [f"(has(author_ids, '{a}') OR has(author_ids, 'https://openalex.org/{a}'))" for a in a_ids]
+                clauses.append(f"({' AND '.join(and_clauses)})")
+            else:
+                quoted = ", ".join(f"'{a}'" for a in a_ids)
+                quoted_urls = ", ".join(f"'https://openalex.org/{a}'" for a in a_ids)
+                clauses.append(f"(hasAny(author_ids, [{quoted}]) OR hasAny(author_ids, [{quoted_urls}]))")
+
+        # Países (Múltiples con OR / AND)
+        country_codes = filters.get('country_codes') or []
+        if isinstance(country_codes, str):
+            country_codes = [c.strip() for c in country_codes.split(',') if c.strip()]
+        single_country = filters.get('country_code')
+        if single_country and single_country not in country_codes:
+            country_codes.append(single_country)
+
+        country_codes = [str(c).strip().upper() for c in country_codes if str(c).strip()]
+        if country_codes:
+            country_logic = str(filters.get('country_logic', 'OR')).strip().upper()
+            if country_logic == 'AND':
+                and_clauses = [f"(country_code = '{c}' OR has(country_codes, '{c}') OR has(all_country_codes, '{c}'))" for c in country_codes]
+                clauses.append(f"({' AND '.join(and_clauses)})")
+            else:
+                quoted_codes = ", ".join(f"'{c}'" for c in country_codes)
+                clauses.append(f"(country_code IN ({quoted_codes}) OR hasAny(country_codes, [{quoted_codes}]) OR hasAny(all_country_codes, [{quoted_codes}]))")
 
         # Acceso Abierto
         is_oa = filters.get('is_oa')

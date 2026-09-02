@@ -591,6 +591,29 @@ async def download_indicators_zip(request: Request):
     )
 
 
+async def delete_exported_package(request: Request):
+    """Elimina un paquete generado y sus archivos asociados del disco."""
+    package_name = request.path_params.get('package_name', '').strip()
+    if not package_name or '..' in package_name or '/' in package_name or '\\' in package_name:
+        return JSONResponse({'error': 'Nombre de paquete no válido.'}, status_code=400)
+    
+    target_dir = EXPORTS_DIR / package_name
+    if not target_dir.exists():
+        return JSONResponse({'error': f"Paquete '{package_name}' no encontrado en disco."}, status_code=404)
+    
+    try:
+        shutil.rmtree(str(target_dir))
+        logger.info(f"Paquete eliminado de disco: {package_name}")
+        return JSONResponse({
+            'success': True,
+            'message': f"Paquete '{package_name}' eliminado exitosamente del disco.",
+            'package_name': package_name
+        })
+    except Exception as e:
+        logger.error(f"Error eliminando paquete {package_name}: {e}", exc_info=True)
+        return JSONResponse({'error': f"Error al eliminar paquete: {str(e)}"}, status_code=500)
+
+
 # --- Definición de Rutas ASGI ---
 routes = [
     Route('/api/health', health_check, methods=['GET']),
@@ -602,6 +625,8 @@ routes = [
     Route('/api/jobs/status/{job_id}', get_job_status, methods=['GET']),
     Route('/api/jobs', list_jobs, methods=['GET']),
     Route('/api/indicators/packages', list_exported_packages, methods=['GET']),
+    Route('/api/indicators/packages/{package_name}', delete_exported_package, methods=['DELETE']),
+    Route('/api/indicators/delete/{package_name}', delete_exported_package, methods=['DELETE', 'POST']),
     Route('/api/indicators/download/{package_name}', download_indicators_zip, methods=['GET']),
 ]
 

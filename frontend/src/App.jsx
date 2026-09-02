@@ -30,7 +30,8 @@ import {
   Database,
   Library,
   Check,
-  FileText
+  FileText,
+  Trash2
 } from 'lucide-react'
 
 const API_BASE = ''
@@ -314,6 +315,19 @@ export default function App() {
       console.error('Error loading packages:', err)
     } finally {
       setLoadingPackages(false)
+    }
+  }
+
+  // Delete Package from Disk
+  const handleDeletePackage = async (packageName) => {
+    if (!window.confirm(`¿Estás seguro de que deseas eliminar permanentemente el paquete "${packageName}"?\n\nEsta acción borrará los archivos Excel, JSON y ZIP asociados en disco.`)) {
+      return
+    }
+    try {
+      await axios.delete(`/api/indicators/packages/${encodeURIComponent(packageName)}`)
+      fetchPackages()
+    } catch (err) {
+      alert('Error al eliminar paquete: ' + (err.response?.data?.error || err.message))
     }
   }
 
@@ -1254,9 +1268,18 @@ export default function App() {
                       </a>
                       <button
                         className="btn btn-secondary"
+                        title="Ver Tablas y Archivos Incluidos"
                         onClick={() => setSelectedPackageDetails(pkg)}
                       >
                         <FileSpreadsheet size={16} />
+                      </button>
+                      <button
+                        className="btn btn-secondary"
+                        title="Eliminar Paquete de Disco"
+                        style={{ color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.35)', background: 'rgba(239, 68, 68, 0.08)' }}
+                        onClick={() => handleDeletePackage(pkg.package_name)}
+                      >
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </div>

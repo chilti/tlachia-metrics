@@ -1230,7 +1230,13 @@ export default function App() {
                         <span className="badge badge-green">Listo</span>
                       </div>
 
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '12px' }}>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Documentos Usados:</span>
+                          <strong style={{ color: '#38bdf8', fontFamily: 'var(--font-mono)' }}>
+                            {pkg.total_works ? `${pkg.total_works.toLocaleString()} arts` : 'Completo'}
+                          </strong>
+                        </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span>Archivos Excel:</span>
                           <strong style={{ color: 'var(--text-muted)' }}>48 libros (.xlsx)</strong>
@@ -1513,11 +1519,20 @@ export default function App() {
       {/* Package Contents Breakdown Modal */}
       {selectedPackageDetails && (
         <div className="modal-backdrop" onClick={() => setSelectedPackageDetails(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <FolderArchive size={22} color="var(--accent-primary)" />
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Contenido de {selectedPackageDetails.package_name}</h3>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '680px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)' }}>
+                  <FolderArchive size={22} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#fff', margin: 0 }}>
+                    Ficha Técnica del Paquete
+                  </h3>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                    {selectedPackageDetails.package_name}
+                  </span>
+                </div>
               </div>
               <button
                 onClick={() => setSelectedPackageDetails(null)}
@@ -1527,38 +1542,151 @@ export default function App() {
               </button>
             </div>
 
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <p>Este paquete contiene la batería unificada de 48 libros Excel organizados en tres temporalidades:</p>
-              
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', background: '#0e1526', padding: '12px', borderRadius: '8px' }}>
-                <div>• Locations.xlsx</div>
-                <div>• Organizations.xlsx</div>
-                <div>• Locations Subnational.xlsx</div>
-                <div>• Organizations Colab.xlsx</div>
-                <div>• Sector Types.xlsx</div>
-                <div>• Researchers.xlsx</div>
-                <div>• Publication Sources.xlsx</div>
-                <div>• Funding Agencies.xlsx</div>
-                <div>• Macro Topics.xlsx</div>
-                <div>• Meso Topics.xlsx</div>
-                <div>• Micro Topics.xlsx</div>
-                <div>• Research Areas ESI.xlsx</div>
-                <div>• Research Areas SDG.xlsx</div>
-                <div>• Concepts.xlsx</div>
-                <div>• Keywords.xlsx</div>
-                <div>• Economic APC Breakdown.xlsx</div>
+            {/* Quick Metrics Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginTop: '16px' }}>
+              <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Documentos Usados</span>
+                <strong style={{ fontSize: '1.1rem', color: '#38bdf8', fontFamily: 'var(--font-mono)' }}>
+                  {selectedPackageDetails.total_works ? `${selectedPackageDetails.total_works.toLocaleString()}` : 'Completo'}
+                </strong>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>artículos procesados</span>
+              </div>
+
+              <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Libros Excel</span>
+                <strong style={{ fontSize: '1.1rem', color: '#34d399', fontFamily: 'var(--font-mono)' }}>
+                  48 Libros
+                </strong>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>16 ent. × 3 periodos</span>
+              </div>
+
+              <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Tamaño Paquete</span>
+                <strong style={{ fontSize: '1.1rem', color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)' }}>
+                  {selectedPackageDetails.zip_size_mb} MB
+                </strong>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>archivo comprimido</span>
+              </div>
+
+              <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Corpus JSON</span>
+                <strong style={{ fontSize: '1.1rem', color: selectedPackageDetails.has_json ? '#10b981' : 'var(--text-dim)' }}>
+                  {selectedPackageDetails.has_json ? 'Incluido' : 'No'}
+                </strong>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>registros crudos OpenAlex</span>
               </div>
             </div>
 
-            <a
-              href={selectedPackageDetails.download_url}
-              className="btn btn-success"
-              style={{ textDecoration: 'none' }}
-              download
-            >
-              <Download size={18} />
-              Descargar {selectedPackageDetails.zip_filename} ({selectedPackageDetails.zip_size_mb} MB)
-            </a>
+            {/* Search Strategy & Filters Card */}
+            <div style={{ background: '#0e1526', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginTop: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                <SlidersHorizontal size={16} color="var(--accent-primary)" />
+                <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                  Estrategia de Búsqueda y Filtros Utilizados
+                </h4>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.8rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>Modo de Extracción:</span>
+                  <span style={{ fontWeight: 600, color: '#fff' }}>
+                    {selectedPackageDetails.search_strategy?.mode_label || (selectedPackageDetails.source_mode === 'ids' ? 'Lista de IDs' : selectedPackageDetails.source_mode === 'upload' ? 'Archivo Subido' : 'Filtros Dinámicos OpenAlex')}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>Criterios y Filtros Aplicados:</span>
+                  <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '8px 12px', borderRadius: '6px', color: 'var(--text-main)', lineHeight: 1.5, fontSize: '0.78rem' }}>
+                    {selectedPackageDetails.search_strategy?.description || 'Consulta procesada sobre la base de datos OpenAlex.'}
+                  </div>
+                </div>
+
+                {selectedPackageDetails.filters && Object.keys(selectedPackageDetails.filters).length > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', marginTop: '6px' }}>
+                    {selectedPackageDetails.filters.query && (
+                      <div style={{ fontSize: '0.74rem' }}>
+                        <span style={{ color: 'var(--text-dim)' }}>Texto / Query: </span>
+                        <strong style={{ color: '#fff' }}>"{selectedPackageDetails.filters.query}"</strong>
+                      </div>
+                    )}
+                    {selectedPackageDetails.filters.country_codes?.length > 0 && (
+                      <div style={{ fontSize: '0.74rem' }}>
+                        <span style={{ color: 'var(--text-dim)' }}>Países: </span>
+                        <strong style={{ color: '#38bdf8' }}>{selectedPackageDetails.filters.country_codes.join(', ')} ({selectedPackageDetails.filters.country_logic || 'OR'})</strong>
+                      </div>
+                    )}
+                    {selectedPackageDetails.filters.work_types?.length > 0 && (
+                      <div style={{ fontSize: '0.74rem' }}>
+                        <span style={{ color: 'var(--text-dim)' }}>Tipos: </span>
+                        <strong style={{ color: '#fb7185' }}>{selectedPackageDetails.filters.work_types.join(', ')}</strong>
+                      </div>
+                    )}
+                    {(selectedPackageDetails.filters.start_year || selectedPackageDetails.filters.end_year) && (
+                      <div style={{ fontSize: '0.74rem' }}>
+                        <span style={{ color: 'var(--text-dim)' }}>Años: </span>
+                        <strong style={{ color: '#fbbf24' }}>{selectedPackageDetails.filters.start_year || 1900} — {selectedPackageDetails.filters.end_year || 2026}</strong>
+                      </div>
+                    )}
+                    {selectedPackageDetails.filters.oa_status && selectedPackageDetails.filters.oa_status !== 'all' && (
+                      <div style={{ fontSize: '0.74rem' }}>
+                        <span style={{ color: 'var(--text-dim)' }}>OA: </span>
+                        <strong style={{ color: '#34d399' }}>{selectedPackageDetails.filters.oa_status.toUpperCase()}</strong>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Excel Reports Breakdown */}
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>
+                  Batería de 48 Tablas Excel Incluidas (16 Entidades × 3 Temporalidades)
+                </span>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                  Full • 2021-2025 • Trend
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: '#0e1526', padding: '12px', borderRadius: '8px', maxHeight: '180px', overflowY: 'auto', fontSize: '0.75rem' }}>
+                <div>📄 1. Locations.xlsx</div>
+                <div>🏢 2. Organizations.xlsx</div>
+                <div>🗺️ 3. Locations Subnational.xlsx</div>
+                <div>🤝 4. Organizations Colab.xlsx</div>
+                <div>🏭 5. Sector Types.xlsx</div>
+                <div>👥 6. Researchers.xlsx</div>
+                <div>📚 7. Publication Sources.xlsx</div>
+                <div>🏛️ 8. Funding Agencies.xlsx</div>
+                <div>🧭 9. Macro Topics.xlsx</div>
+                <div>🔬 10. Meso Topics.xlsx</div>
+                <div>🔍 11. Micro Topics.xlsx</div>
+                <div>🌟 12. Research Areas ESI.xlsx</div>
+                <div>🎯 13. Research Areas SDG.xlsx</div>
+                <div>💡 14. Concepts.xlsx</div>
+                <div>🏷️ 15. Keywords.xlsx</div>
+                <div>💰 16. Economic APC Breakdown.xlsx</div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border-subtle)', paddingTop: '16px' }}>
+              <a
+                href={selectedPackageDetails.download_url}
+                className="btn btn-success"
+                style={{ flex: 1, textDecoration: 'none', justifyContent: 'center', padding: '12px' }}
+                download
+              >
+                <Download size={18} />
+                Descargar Paquete ({selectedPackageDetails.zip_size_mb} MB)
+              </a>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setSelectedPackageDetails(null)}
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}

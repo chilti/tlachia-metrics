@@ -398,6 +398,57 @@ async def upload_corpus_preview(request: Request):
         return JSONResponse({'error': f"Error al procesar archivo: {str(e)}"}, status_code=400)
 
 
+def build_search_strategy_summary(source_mode: str, payload: dict) -> dict:
+    """Construye un resumen legible de la estrategia de búsqueda y filtros utilizados."""
+    if source_mode == 'ids':
+        ids = payload.get('ids', [])
+        return {
+            'mode_label': 'Lista de Identificadores (DOIs / IDs)',
+            'description': f"Corpus conformado a partir de {len(ids)} DOIs o IDs de OpenAlex especificados directamente.",
+            'details': {'total_ids': len(ids)}
+        }
+    elif source_mode == 'upload':
+        fp = payload.get('file_path', '')
+        fn = Path(fp).name if fp else 'archivo'
+        return {
+            'mode_label': 'Archivo Subido de Corpus',
+            'description': f"Corpus estructurado desde archivo local ({fn}).",
+            'details': {'filename': fn}
+        }
+    else:
+        filters = payload.get('filters', {})
+        items = []
+        if filters.get('query'):
+            items.append(f"Palabras clave: \"{filters['query']}\"")
+        if filters.get('country_codes'):
+            c_list = filters['country_codes']
+            c_logic = filters.get('country_logic', 'OR')
+            items.append(f"Países: {', '.join(c_list)} ({c_logic})")
+        if filters.get('work_types'):
+            items.append(f"Tipos de Documento: {', '.join(filters['work_types'])}")
+        if filters.get('start_year') or filters.get('end_year'):
+            sy = filters.get('start_year', 1900)
+            ey = filters.get('end_year', 2026)
+            items.append(f"Años: {sy} — {ey}")
+        if filters.get('oa_status') and filters.get('oa_status') != 'all':
+            items.append(f"Acceso Abierto: {filters['oa_status'].upper()}")
+        if filters.get('topic_ids'):
+            items.append(f"{len(filters['topic_ids'])} Tópicos ({filters.get('topic_logic', 'OR')})")
+        if filters.get('source_ids'):
+            items.append(f"{len(filters['source_ids'])} Revistas/Fuentes")
+        if filters.get('institution_ids'):
+            items.append(f"{len(filters['institution_ids'])} Instituciones ({filters.get('institution_logic', 'OR')})")
+        if filters.get('author_ids'):
+            items.append(f"{len(filters['author_ids'])} Investigadores ({filters.get('author_logic', 'OR')})")
+
+        desc = " • ".join(items) if items else "Consulta global sin restricciones de filtro (Todo OpenAlex)"
+        return {
+            'mode_label': 'Filtros Dinámicos OpenAlex',
+            'description': desc,
+            'details': filters
+        }
+
+
 # --- Ejecución de Trabajos de Cálculo en Segundo Plano ---
 def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
     """Función de trabajador ejecutada en hilo independiente."""
@@ -462,6 +513,26 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             progress_callback=progress_callback
         )
 
+        strategy = build_search_strategy_summary(source_mode, payload)
+        manifest_data = {
+            'package_name': package_name,
+            'total_works': len(df),
+            'source_mode': source_mode,
+            'filters': payload.get('filters', {}),
+            'ids_count': len(payload.get('ids', [])) if source_mode == 'ids' else None,
+            'uploaded_file': payload.get('file_path') if source_mode == 'upload' else None,
+            'created_at': datetime.now().isoformat(),
+            'total_excel_files': result.get('total_excel_files', 48),
+            'tables_summary': result.get('tables_summary', {}),
+            'search_strategy': strategy
+        }
+        manifest_file = EXPORTS_DIR / package_name / "manifest.json"
+        try:
+            with open(manifest_file, 'w', encoding='utf-8') as mf:
+                json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"No se pudo guardar manifest.json: {e}")
+
         with JOBS_LOCK:
             JOBS_STORE[job_id]['status'] = 'completed'
             JOBS_STORE[job_id]['progress'] = 100
@@ -473,7 +544,8 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
                 'total_excel_files': result.get('total_excel_files', 48),
                 'zip_path': result.get('zip_path'),
                 'download_url': f"/api/indicators/download/{package_name}",
-                'tables_summary': result.get('tables_summary', {})
+                'tables_summary': result.get('tables_summary', {}),
+                'search_strategy': strategy
             }
 
     except Exception as e:
@@ -493,10 +565,10 @@ async def create_computation_job(request: Request):
     try:
         payload = await request.json()
     except Exception:
-        return JSONResponse({'error': 'Cuerpo de solicitud inválido.'}, status_code=400)
+        return JSONResponse({'error': 'JSON payload inválido.'}, status_code=400)
 
     job_id = f"job_{uuid.uuid4().hex[:12]}"
-    package_name = payload.get('package_name', 'TlachIA_Report').strip().replace(' ', '_')
+    package_name = payload.get('package_name', '').strip().replace(' ', '_')
     if not package_name:
         package_name = f"Corpus_{int(time.time())}"
 
@@ -549,7 +621,7 @@ async def list_jobs(request: Request):
 
 # --- Descarga y Exploración de Paquetes Generados ---
 async def list_exported_packages(request: Request):
-    """Lista todos los paquetes .ZIP generados disponibles en disco."""
+    """Lista todos los paquetes .ZIP generados disponibles en disco con metadatos completos."""
     packages = []
     if EXPORTS_DIR.exists():
         for item in EXPORTS_DIR.iterdir():
@@ -557,17 +629,43 @@ async def list_exported_packages(request: Request):
                 zip_file = item / f"{item.name}.zip"
                 json_file = item / f"{item.name}_openalex_works.json"
                 excel_dir = item / "excel_reports"
+                manifest_file = item / "manifest.json"
+
                 if zip_file.exists():
                     stat = zip_file.stat()
                     excel_count = len(list(excel_dir.glob('*.xlsx'))) if excel_dir.exists() else 0
+                    
+                    manifest_data = {}
+                    if manifest_file.exists():
+                        try:
+                            with open(manifest_file, 'r', encoding='utf-8') as mf:
+                                manifest_data = json.load(mf)
+                        except Exception:
+                            pass
+                    
+                    total_works = manifest_data.get('total_works')
+                    # Si no hay manifest pero hay JSON, estimar o leer total de obras
+                    if total_works is None and json_file.exists():
+                        try:
+                            with open(json_file, 'r', encoding='utf-8') as jf:
+                                parsed = json.load(jf)
+                                total_works = len(parsed) if isinstance(parsed, list) else None
+                        except Exception:
+                            pass
+
                     packages.append({
                         'package_name': item.name,
                         'zip_filename': f"{item.name}.zip",
                         'zip_size_bytes': stat.st_size,
                         'zip_size_mb': round(stat.st_size / (1024 * 1024), 2),
-                        'created_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        'created_at': manifest_data.get('created_at') or datetime.fromtimestamp(stat.st_mtime).isoformat(),
                         'has_json': json_file.exists(),
                         'excel_files_count': excel_count,
+                        'total_works': total_works,
+                        'source_mode': manifest_data.get('source_mode', 'filters'),
+                        'filters': manifest_data.get('filters', {}),
+                        'search_strategy': manifest_data.get('search_strategy', {}),
+                        'tables_summary': manifest_data.get('tables_summary', {}),
                         'download_url': f"/api/indicators/download/{item.name}"
                     })
     

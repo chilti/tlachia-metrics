@@ -107,6 +107,7 @@ export default function App() {
   const [hasSearched, setHasSearched] = useState(false)
   const [previewData, setPreviewData] = useState({ total: 0, results: [], page: 1, total_pages: 1 })
   const [currentPage, setCurrentPage] = useState(1)
+  const [isExportingCorpus, setIsExportingCorpus] = useState(null) // 'csv' | 'json' | null
   const pageSize = 20
 
   // Package & Calculation State
@@ -341,6 +342,69 @@ export default function App() {
       }
     } finally {
       setPreviewLoading(false)
+    }
+  }
+
+  // Download Corpus in CSV or JSON
+  const handleDownloadCorpus = async (format = 'csv') => {
+    if (!user) {
+      setLoginModalReason('general')
+      setLoginModalOpen(true)
+      return
+    }
+
+    setIsExportingCorpus(format)
+    try {
+      const payload = {
+        format,
+        corpus_name: packageName || 'Corpus_OpenAlex',
+        source_mode: searchMode,
+        query,
+        domain_names: selectedDomains.map(d => d.domain_name || d.name),
+        domain_ids: selectedDomains.map(d => d.id),
+        field_names: selectedFields.map(f => f.field_name || f.name),
+        field_ids: selectedFields.map(f => f.id),
+        subfield_names: selectedSubfields.map(sf => sf.subfield_name || sf.name),
+        subfield_ids: selectedSubfields.map(sf => sf.id),
+        topic_ids: selectedTopics.map(t => t.id),
+        topic_logic: topicLogic,
+        source_ids: selectedSources.map(s => s.id),
+        institution_ids: selectedInstitutions.map(i => i.id),
+        institution_logic: institutionLogic,
+        author_ids: selectedAuthors.map(a => a.id),
+        author_logic: authorLogic,
+        country_codes: selectedCountries.map(c => c.code || c.id),
+        country_logic: countryLogic,
+        work_types: selectedTypes.map(t => t.id || t.type_id),
+        start_year: allYears ? 1900 : startYear,
+        end_year: allYears ? 2026 : endYear,
+        oa_status: oaStatus !== 'all' ? oaStatus : undefined,
+        ids: searchMode === 'ids' ? idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean) : [],
+        file_path: uploadResult?.file_path,
+        limit: 10000
+      }
+
+      const response = await axios.post('/api/corpus/export', payload, {
+        headers: user.orcid ? { 'X-User-ORCID': user.orcid } : {},
+        responseType: 'blob'
+      })
+
+      const blob = new Blob([response.data], {
+        type: format === 'json' ? 'application/json' : 'text/csv'
+      })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(packageName || 'Corpus_OpenAlex').trim()}_works.${format}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Error downloading corpus:', err)
+      alert('Error descargando el corpus: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setIsExportingCorpus(null)
     }
   }
 
@@ -1841,6 +1905,230 @@ export default function App() {
                     </div>
                   )}
                 </div>
+
+                {/* Papers Preview Table & Export Section */}
+                {hasSearched && previewData.total > 0 && (
+                  <div className="glass-panel" style={{ padding: '24px', marginTop: '20px' }}>
+                    {/* Header with Title and Download Buttons */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)' }}>
+                          <FileText size={20} />
+                        </div>
+                        <div>
+                          <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                            Vista Previa de Artículos del Corpus
+                          </h4>
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                            Mostrando {((currentPage - 1) * pageSize) + 1} a {Math.min(currentPage * pageSize, previewData.total)} de {previewData.total.toLocaleString()} obras encontradas
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Download Buttons */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          onClick={() => handleDownloadCorpus('csv')}
+                          disabled={isExportingCorpus !== null}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '8px 14px',
+                            borderRadius: '8px',
+                            background: 'rgba(56, 189, 248, 0.12)',
+                            border: '1px solid rgba(56, 189, 248, 0.35)',
+                            color: 'var(--accent-primary)',
+                            fontWeight: 700,
+                            fontSize: '0.8rem',
+                            cursor: isExportingCorpus !== null ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="Descargar dataset en formato CSV con todas las variables normalizadas"
+                        >
+                          {isExportingCorpus === 'csv' ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <FileSpreadsheet size={14} />
+                          )}
+                          <span>Descargar CSV</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDownloadCorpus('json')}
+                          disabled={isExportingCorpus !== null}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '8px 14px',
+                            borderRadius: '8px',
+                            background: 'rgba(167, 139, 250, 0.12)',
+                            border: '1px solid rgba(167, 139, 250, 0.35)',
+                            color: '#c084fc',
+                            fontWeight: 700,
+                            fontSize: '0.8rem',
+                            cursor: isExportingCorpus !== null ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="Descargar dataset completo estructurado en formato JSON"
+                        >
+                          {isExportingCorpus === 'json' ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <FileJson size={14} />
+                          )}
+                          <span>Descargar JSON</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Table of Works */}
+                    <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid var(--border-subtle)', background: 'rgba(0, 0, 0, 0.2)' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
+                        <thead style={{ background: '#0e1526', borderBottom: '1px solid var(--border-subtle)' }}>
+                          <tr>
+                            <th style={{ padding: '12px 14px', color: 'var(--text-main)', fontWeight: 700, minWidth: '280px' }}>
+                              Artículo / Obra Científica
+                            </th>
+                            <th style={{ padding: '12px 10px', color: 'var(--text-main)', fontWeight: 700, width: '65px', textAlign: 'center' }}>
+                              Año
+                            </th>
+                            <th style={{ padding: '12px 12px', color: 'var(--text-main)', fontWeight: 700, minWidth: '220px' }}>
+                              Autores / Afiliación
+                            </th>
+                            <th style={{ padding: '12px 12px', color: 'var(--text-main)', fontWeight: 700, minWidth: '180px' }}>
+                              Disciplina / Tópico
+                            </th>
+                            <th style={{ padding: '12px 10px', color: 'var(--text-main)', fontWeight: 700, textAlign: 'right', width: '80px' }}>
+                              Citas
+                            </th>
+                            <th style={{ padding: '12px 10px', color: 'var(--text-main)', fontWeight: 700, textAlign: 'center', width: '95px' }}>
+                              Acceso
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {previewData.results.map((r, idx) => (
+                            <tr
+                              key={r.id || idx}
+                              style={{
+                                borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+                                background: idx % 2 === 0 ? 'rgba(255, 255, 255, 0.015)' : 'transparent'
+                              }}
+                            >
+                              <td style={{ padding: '12px 14px', verticalAlign: 'top' }}>
+                                <div style={{ fontWeight: 600, color: '#fff', marginBottom: '4px', lineHeight: 1.35 }}>
+                                  {r.title}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.72rem', color: 'var(--text-dim)', flexWrap: 'wrap' }}>
+                                  {r.doi ? (
+                                    <a
+                                      href={r.doi.startsWith('http') ? r.doi : `https://doi.org/${r.doi}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      style={{ color: '#38bdf8', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '2px' }}
+                                    >
+                                      <span>DOI: {r.doi.replace('https://doi.org/', '')}</span>
+                                      <ExternalLink size={10} />
+                                    </a>
+                                  ) : (
+                                    <span style={{ color: 'var(--text-muted)' }}>ID: {r.id}</span>
+                                  )}
+                                  {r.source_name && (
+                                    <span style={{ color: 'var(--text-dim)', background: 'rgba(255,255,255,0.05)', padding: '1px 6px', borderRadius: '4px' }}>
+                                      📚 {r.source_name}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+
+                              <td style={{ padding: '12px 10px', verticalAlign: 'top', textAlign: 'center', fontWeight: 700, color: 'var(--text-main)', fontFamily: 'var(--font-mono)' }}>
+                                {r.publication_year || '-'}
+                              </td>
+
+                              <td style={{ padding: '12px 12px', verticalAlign: 'top', color: 'var(--text-dim)' }}>
+                                <div style={{ color: 'var(--text-main)', fontSize: '0.78rem', marginBottom: '2px' }}>
+                                  {r.authors && r.authors.length > 0 ? (
+                                    <>
+                                      {r.authors.slice(0, 3).join(', ')}
+                                      {r.authors.length > 3 && ` +${r.authors.length - 3}`}
+                                    </>
+                                  ) : (
+                                    <span style={{ color: 'var(--text-muted)' }}>Sin autores listados</span>
+                                  )}
+                                </div>
+                                {r.institutions && r.institutions.length > 0 && (
+                                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                    🏢 {r.institutions[0]}
+                                  </div>
+                                )}
+                              </td>
+
+                              <td style={{ padding: '12px 12px', verticalAlign: 'top', color: 'var(--text-dim)' }}>
+                                <div style={{ color: 'var(--text-main)', fontSize: '0.76rem', fontWeight: 600 }}>
+                                  {r.field || r.domain || '-'}
+                                </div>
+                                {r.topic && (
+                                  <div style={{ fontSize: '0.7rem', color: '#38bdf8', marginTop: '1px' }}>
+                                    {r.topic}
+                                  </div>
+                                )}
+                              </td>
+
+                              <td style={{ padding: '12px 10px', verticalAlign: 'top', textAlign: 'right', fontWeight: 700, color: '#fbbf24', fontFamily: 'var(--font-mono)' }}>
+                                {r.cited_by_count !== undefined ? r.cited_by_count.toLocaleString() : 0}
+                              </td>
+
+                              <td style={{ padding: '12px 10px', verticalAlign: 'top', textAlign: 'center' }}>
+                                {renderOaBadge(r.oa_status)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination for Preview Table */}
+                    {previewData.total_pages > 1 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', fontSize: '0.8rem', color: 'var(--text-dim)', flexWrap: 'wrap', gap: '8px' }}>
+                        <span>
+                          Página <strong>{currentPage}</strong> de <strong>{previewData.total_pages}</strong> ({previewData.total.toLocaleString()} obras)
+                        </span>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            disabled={previewLoading || currentPage <= 1}
+                            onClick={() => fetchPreview(currentPage - 1)}
+                            style={{
+                              padding: '5px 12px',
+                              borderRadius: '6px',
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid var(--border-color)',
+                              color: currentPage <= 1 ? 'var(--text-muted)' : '#fff',
+                              cursor: currentPage <= 1 ? 'not-allowed' : 'pointer'
+                            }}
+                          >
+                            Anterior
+                          </button>
+                          <button
+                            disabled={previewLoading || currentPage >= previewData.total_pages}
+                            onClick={() => fetchPreview(currentPage + 1)}
+                            style={{
+                              padding: '5px 12px',
+                              borderRadius: '6px',
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid var(--border-color)',
+                              color: currentPage >= previewData.total_pages ? 'var(--text-muted)' : '#fff',
+                              cursor: currentPage >= previewData.total_pages ? 'not-allowed' : 'pointer'
+                            }}
+                          >
+                            Siguiente
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

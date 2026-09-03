@@ -547,6 +547,65 @@ async def upload_corpus_preview(request: Request):
         return JSONResponse({'error': f"Error al procesar archivo: {str(e)}"}, status_code=400)
 
 
+async def export_corpus_endpoint(request: Request):
+    """
+    Exporta el corpus filtrado o conjunto de IDs en formato CSV o JSON para descarga directa.
+    Requiere autenticación ORCID.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    fmt = (body.get('format') or 'csv').lower()
+    corpus_name = (body.get('corpus_name') or 'Corpus_OpenAlex').strip()
+    safe_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in corpus_name)[:50]
+    source_mode = body.get('source_mode', 'filters')
+    limit = int(body.get('limit', 10000))
+
+    try:
+        df = None
+        if source_mode == 'ids':
+            ids_list = body.get('ids', [])
+            if ids_list:
+                df = engine.corpus_builder.from_openalex_ids(ids_list)
+        elif source_mode == 'upload':
+            file_path = body.get('file_path')
+            if file_path and Path(file_path).exists():
+                df = engine.load_corpus(file_path)
+        else:
+            df = engine.corpus_builder.from_filters(body, limit=limit)
+
+        if df is None or len(df) == 0:
+            return JSONResponse({'error': 'No se encontraron artículos para exportar.'}, status_code=404)
+
+        if fmt == 'json':
+            from openalex_indicators_engine.utils.json_encoder import JSONCustomEncoder
+            records = df.to_dict(orient='records')
+            json_str = json.dumps(records, cls=JSONCustomEncoder, ensure_ascii=False, indent=2)
+            return Response(
+                content=json_str,
+                media_type='application/json',
+                headers={'Content-Disposition': f'attachment; filename="{safe_name}_works.json"'}
+            )
+        else:
+            # CSV format: remove raw_data column if present for clean and light CSV
+            clean_df = df.drop(columns=['raw_data'], errors='ignore')
+            csv_str = clean_df.to_csv(index=False)
+            return Response(
+                content=csv_str,
+                media_type='text/csv',
+                headers={'Content-Disposition': f'attachment; filename="{safe_name}_works.csv"'}
+            )
+    except Exception as e:
+        logger.error(f"Error exportando corpus: {e}", exc_info=True)
+        return JSONResponse({'error': f"Error exportando corpus: {str(e)}"}, status_code=500)
+
+
 def build_search_strategy_summary(source_mode: str, payload: dict) -> dict:
     """Construye un resumen legible de la estrategia de búsqueda y filtros utilizados."""
     if source_mode == 'ids':
@@ -1216,7 +1275,8 @@ routes = [
     Route('/api/corpus/preview', preview_corpus, methods=['POST']),
     Route('/api/corpus/preview-ids', preview_ids, methods=['POST']),
     Route('/api/corpus/upload-preview', upload_corpus_preview, methods=['POST']),
-    Route('/api/corpus/saved', list_saved_corpuses_endpoint, methods=['GET']),
+    Route('/api/corpus/export', export_corpus_endpoint, methods=['POST']),
+    Route('/api/corpus/list', list_saved_corpuses_endpoint, methods=['GET']),
     Route('/api/corpus/save', save_corpus_endpoint, methods=['POST']),
     Route('/api/corpus/saved/{corpus_id}', get_saved_corpus_endpoint, methods=['GET']),
     Route('/api/corpus/saved/{corpus_id}/delete', delete_saved_corpus_endpoint, methods=['DELETE', 'POST']),

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import axios from 'axios'
 import {
   Search,
@@ -36,6 +36,7 @@ import {
   ShieldCheck,
   User,
   AlertOctagon,
+  AlertTriangle,
   KeyRound
 } from 'lucide-react'
 import OrcidLoginModal from './components/OrcidLoginModal'
@@ -134,6 +135,38 @@ export default function App() {
   const [lastCalculatedSignature, setLastCalculatedSignature] = useState(null)
   const [duplicateModalOpen, setDuplicateModalOpen] = useState(false)
   const [duplicatePackageName, setDuplicatePackageName] = useState('')
+
+  // Massive Corpus (> 1M) Confirmation Modal State
+  const [massiveCorpusModalOpen, setMassiveCorpusModalOpen] = useState(false)
+
+  // Determine if there is at least one active filter or search query
+  const hasAnyFilter = useMemo(() => {
+    if (searchMode === 'ids') {
+      return idsText.trim().length > 0
+    }
+    if (searchMode === 'upload') {
+      return uploadedFile !== null || uploadResult !== null
+    }
+    return Boolean(
+      query.trim().length > 0 ||
+      selectedDomains.length > 0 ||
+      selectedFields.length > 0 ||
+      selectedSubfields.length > 0 ||
+      selectedTopics.length > 0 ||
+      selectedSources.length > 0 ||
+      selectedInstitutions.length > 0 ||
+      selectedAuthors.length > 0 ||
+      selectedCountries.length > 0 ||
+      selectedTypes.length > 0 ||
+      !allYears ||
+      oaStatus !== 'all'
+    )
+  }, [
+    searchMode, idsText, uploadedFile, uploadResult, query,
+    selectedDomains, selectedFields, selectedSubfields, selectedTopics,
+    selectedSources, selectedInstitutions, selectedAuthors, selectedCountries,
+    selectedTypes, allYears, oaStatus
+  ])
 
   // Downloads Hub State
   const [packages, setPackages] = useState([])
@@ -250,6 +283,10 @@ export default function App() {
     if (!user) {
       setLoginModalReason('general')
       setLoginModalOpen(true)
+      return
+    }
+    if (!hasAnyFilter) {
+      alert('Debes ingresar al menos una palabra clave, seleccionar una entidad o aplicar un filtro para dimensionar el corpus.')
       return
     }
     setHasSearched(true)
@@ -728,11 +765,22 @@ export default function App() {
   }
 
   // Launch Metrics Computation Job
-  const handleLaunchCalculation = async (force = false) => {
+  const handleLaunchCalculation = async (force = false, skipMassiveWarning = false) => {
     // Verificar que el usuario esté autenticado para procesar
     if (!user?.orcid) {
       setLoginModalReason('job_creation')
       setLoginModalOpen(true)
+      return
+    }
+
+    if (!hasAnyFilter) {
+      alert('Debes definir al menos un filtro, palabra clave o lista de identificadores para calcular métricas.')
+      return
+    }
+
+    // Si el corpus supera 1 millón de obras y no se ha confirmado explícitamente, pedir confirmación
+    if (previewData.total > 1000000 && !skipMassiveWarning) {
+      setMassiveCorpusModalOpen(true)
       return
     }
 
@@ -768,6 +816,7 @@ export default function App() {
       })
       setLastCalculatedSignature(signature)
       setDuplicateModalOpen(false)
+      setMassiveCorpusModalOpen(false)
       setActiveJob({
         job_id: res.data.job_id,
         package_name: res.data.package_name,
@@ -1557,7 +1606,18 @@ export default function App() {
                     }}
                     onChange={(e) => setIdsText(e.target.value)}
                   />
-                  <button className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }} onClick={handlePreviewIds} disabled={previewLoading}>
+                  <button
+                    className="btn btn-primary"
+                    style={{
+                      width: '100%',
+                      marginTop: '10px',
+                      opacity: (!idsText.trim() || previewLoading) ? 0.5 : 1,
+                      cursor: (!idsText.trim() || previewLoading) ? 'not-allowed' : 'pointer'
+                    }}
+                    onClick={handlePreviewIds}
+                    disabled={previewLoading || !idsText.trim()}
+                    title={!idsText.trim() ? "Pega al menos un DOI o ID para consultar" : "Consultar identificadores en OpenAlex"}
+                  >
                     {previewLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={14} />}
                     Consultar IDs
                   </button>
@@ -1708,10 +1768,13 @@ export default function App() {
                         bottom: '8px',
                         padding: '0 20px',
                         borderRadius: 'var(--radius-md)',
-                        fontSize: '0.85rem'
+                        fontSize: '0.85rem',
+                        opacity: (!hasAnyFilter || previewLoading) ? 0.5 : 1,
+                        cursor: (!hasAnyFilter || previewLoading) ? 'not-allowed' : 'pointer'
                       }}
                       onClick={handleSearch}
-                      disabled={previewLoading}
+                      disabled={previewLoading || !hasAnyFilter}
+                      title={!hasAnyFilter ? "Ingresa una palabra clave, selecciona una entidad o aplica un filtro para buscar" : "Consultar y dimensionar corpus"}
                     >
                       {previewLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
                       Buscar
@@ -1820,8 +1883,14 @@ export default function App() {
                   />
                   <button
                     className="btn btn-primary"
-                    style={{ padding: '12px 24px', fontSize: '0.95rem' }}
-                    disabled={previewData.total === 0 || previewLoading}
+                    style={{
+                      padding: '12px 24px',
+                      fontSize: '0.95rem',
+                      opacity: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 0.5 : 1,
+                      cursor: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 'not-allowed' : 'pointer'
+                    }}
+                    disabled={previewData.total === 0 || previewLoading || !hasAnyFilter}
+                    title={!hasAnyFilter ? "Define al menos un filtro o palabra clave para calcular métricas" : (previewData.total > 1000000 ? "Corpus superior a 1M: Se solicitará confirmación" : "Calcular batería de 48 tablas de indicadores")}
                     onClick={() => {
                       if (!user) {
                         setLoginModalReason('job_creation')
@@ -1903,7 +1972,18 @@ export default function App() {
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '520px', margin: '0 auto 20px', lineHeight: 1.5 }}>
                         Configura los filtros en la barra lateral o escribe palabras clave en el buscador y presiona <strong>Buscar</strong> para consultar la cantidad exacta de artículos disponibles antes de calcular las 48 tablas.
                       </p>
-                      <button className="btn btn-primary" style={{ padding: '10px 28px', fontSize: '0.9rem' }} onClick={handleSearch}>
+                      <button
+                        className="btn btn-primary"
+                        style={{
+                          padding: '10px 28px',
+                          fontSize: '0.9rem',
+                          opacity: (!hasAnyFilter || previewLoading) ? 0.5 : 1,
+                          cursor: (!hasAnyFilter || previewLoading) ? 'not-allowed' : 'pointer'
+                        }}
+                        onClick={handleSearch}
+                        disabled={previewLoading || !hasAnyFilter}
+                        title={!hasAnyFilter ? "Ingresa una palabra clave, selecciona una entidad o aplica un filtro para consultar" : "Consultar y dimensionar corpus"}
+                      >
                         <Search size={16} /> Consultar Corpus
                       </button>
                     </div>
@@ -1981,6 +2061,42 @@ export default function App() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Massive Corpus (> 1M) Alert Banner */}
+                      {previewData.total > 1000000 && (
+                        <div style={{
+                          background: 'rgba(245, 158, 11, 0.1)',
+                          border: '1.5px solid rgba(245, 158, 11, 0.45)',
+                          borderRadius: '12px',
+                          padding: '14px 18px',
+                          marginTop: '16px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '14px'
+                        }}>
+                          <div style={{
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '10px',
+                            background: 'rgba(245, 158, 11, 0.2)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#f59e0b',
+                            flexShrink: 0
+                          }}>
+                            <AlertTriangle size={22} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <h4 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#fbbf24', margin: '0 0 2px' }}>
+                              ⚠️ Aviso de Volumen Masivo ({previewData.total.toLocaleString()} Obras)
+                            </h4>
+                            <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', margin: 0, lineHeight: 1.45 }}>
+                              Este corpus supera <strong>1 millón de artículos</strong>. Calcular los 15 agregadores y 48 libros Excel demandará un tiempo de cómputo y memoria considerables en el cluster. Se solicitará confirmación al iniciar el cálculo. Te sugerimos acotar por años o disciplinas si deseas un subconjunto específico.
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2753,6 +2869,83 @@ export default function App() {
                 Minimizar (Continuará en segundo plano)
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Massive Corpus (> 1M) Confirmation Modal */}
+      {massiveCorpusModalOpen && (
+        <div className="modal-backdrop" onClick={() => setMassiveCorpusModalOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px', textAlign: 'center', padding: '32px 28px' }}>
+            <div style={{
+              width: '60px',
+              height: '60px',
+              borderRadius: '50%',
+              background: 'rgba(245, 158, 11, 0.15)',
+              border: '1.5px solid rgba(245, 158, 11, 0.4)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px',
+              color: '#f59e0b'
+            }}>
+              <AlertTriangle size={32} />
+            </div>
+
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
+              Confirmación de Corpus Masivo
+            </h3>
+
+            <div style={{
+              fontSize: '1.35rem',
+              fontWeight: 800,
+              color: '#fbbf24',
+              fontFamily: 'var(--font-mono)',
+              marginBottom: '12px'
+            }}>
+              {previewData.total.toLocaleString()} Artículos Identificados
+            </div>
+
+            <p style={{ fontSize: '0.86rem', color: 'var(--text-muted)', lineHeight: '1.55', marginBottom: '22px' }}>
+              Estás a punto de solicitar el cálculo exhaustivo de <strong>16 entidades, 48 libros Excel y Parquets analíticos</strong> sobre un corpus superior a <strong>1 millón de obras</strong>.
+              <br /><br />
+              Este proceso consumirá recursos intensivos de cómputo y memoria en el cluster. ¿Deseas continuar o prefieres refinar los filtros por año, país o disciplina?
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                className="btn btn-primary"
+                style={{
+                  padding: '13px 18px',
+                  fontSize: '0.92rem',
+                  fontWeight: 800,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                  border: 'none',
+                  color: '#0f172a',
+                  boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)'
+                }}
+                onClick={() => {
+                  setMassiveCorpusModalOpen(false)
+                  handleLaunchCalculation(false, true)
+                }}
+              >
+                <Sparkles size={18} />
+                <span>Sí, Procesar Corpus Masivo</span>
+              </button>
+
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '10px 14px', fontSize: '0.86rem' }}
+                onClick={() => setMassiveCorpusModalOpen(false)}
+              >
+                <SlidersHorizontal size={14} />
+                <span>Refinar Filtros en Conformador</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

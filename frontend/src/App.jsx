@@ -85,7 +85,7 @@ export default function App() {
   const [selectedTypes, setSelectedTypes] = useState([])
   const [startYear, setStartYear] = useState(2015)
   const [endYear, setEndYear] = useState(2026)
-  const [allYears, setAllYears] = useState(false)
+  const [allYears, setAllYears] = useState(true)
   const [oaStatus, setOaStatus] = useState('all')
 
   // Direct IDs / DOIs State
@@ -217,7 +217,7 @@ export default function App() {
     setSelectedTypes([])
     setStartYear(2015)
     setEndYear(2026)
-    setAllYears(false)
+    setAllYears(true)
     setOaStatus('all')
     setIdsText('')
     setUploadedFile(null)

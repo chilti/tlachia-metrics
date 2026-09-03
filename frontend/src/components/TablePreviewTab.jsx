@@ -31,9 +31,10 @@ const TABLE_OPTIONS = [
   { id: 'researchers', name: 'Researchers (Investigadores)', icon: '👥' },
   { id: 'publication_sources', name: 'Publication Sources (Revistas)', icon: '📚' },
   { id: 'funding_agencies', name: 'Funding Agencies (Financiamiento)', icon: '🏛️' },
-  { id: 'research_areas_macro_topics', name: 'Domains (Dominios)', icon: '🧭' },
-  { id: 'research_areas_meso_topics', name: 'Fields (Campos)', icon: '🔬' },
-  { id: 'research_areas_micro_topics', name: 'Subfields / Topics (Subcampos)', icon: '🔍' },
+  { id: 'research_areas_domain', name: 'Domains (Dominios - Nivel 1)', icon: '🧭' },
+  { id: 'research_areas_field', name: 'Fields (Campos - Nivel 2)', icon: '🔬' },
+  { id: 'research_areas_subfield', name: 'Subfields (Subcampos - Nivel 3)', icon: '🏷️' },
+  { id: 'research_areas_topic', name: 'Topics (Tópicos - Nivel 4)', icon: '🔍' },
   { id: 'research_areas_sdg', name: 'Research Areas SDG (ODS)', icon: '🎯' },
   { id: 'concepts', name: 'Concepts (Conceptos)', icon: '💡' },
   { id: 'keywords', name: 'Keywords (Palabras Clave)', icon: '🏷️' },
@@ -381,7 +382,7 @@ export default function TablePreviewTab({
           {/* Table Entity Selector (Combo) */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
-              📊 Entidad / Tabla (15 Disponibles)
+              📊 Entidad / Tabla (16 Disponibles)
             </label>
             <select
               value={selectedTable}

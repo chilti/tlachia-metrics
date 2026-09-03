@@ -1654,7 +1654,7 @@ export default function App() {
                     }}
                   >
                     <Sparkles size={18} />
-                    Calcular Métricas (45 Tablas)
+                    Calcular Métricas (48 Tablas)
                   </button>
                 </div>
               </div>
@@ -1839,7 +1839,7 @@ export default function App() {
                     user.is_admin ? (
                       `Visualizando todos los paquetes disponibles en el sistema (${packages.length} paquetes).`
                     ) : (
-                      `Descarga y gestión de tus 45 libros Excel, JSON OpenAlex y Parquets asociados a tu ORCID (${user.orcid}).`
+                      `Descarga y gestión de tus 48 libros Excel, JSON OpenAlex y Parquets asociados a tu ORCID (${user.orcid}).`
                     )
                   ) : (
                     'Conéctate con ORCID para asociar, almacenar y visualizar tus paquetes cienciométricos personales.'
@@ -1967,7 +1967,7 @@ export default function App() {
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span>Archivos Excel:</span>
-                          <strong style={{ color: 'var(--text-muted)' }}>45 libros (.xlsx)</strong>
+                          <strong style={{ color: 'var(--text-muted)' }}>48 libros (.xlsx)</strong>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span>Corpus JSON OpenAlex:</span>
@@ -2214,11 +2214,11 @@ export default function App() {
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-dim)' }}>
                 <span>Dimensiones Analíticas:</span>
-                <span>16 Entidades (Locations, Orgs, Authors, Sources, Topics, APC...)</span>
+                <span>16 Entidades (Locations, Orgs, Authors, Sources, Taxonomy, APC...)</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-dim)' }}>
                 <span>Libros Excel Estilizados:</span>
-                <span>45 Reportes (Histórico, 2021-2025, Anual Trend)</span>
+                <span>48 Reportes (Histórico, 2021-2025, Anual Trend)</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-dim)' }}>
                 <span>Dataset Completo:</span>
@@ -2248,7 +2248,7 @@ export default function App() {
                   }}
                 >
                   <FileSpreadsheet size={18} />
-                  <span>Explorar y Revisar Tablas (15 Entidades)</span>
+                  <span>Explorar y Revisar Tablas (16 Entidades)</span>
                 </button>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
@@ -2493,7 +2493,7 @@ export default function App() {
             <div style={{ marginTop: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                 <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>
-                  Batería de 45 Tablas Excel Incluidas (15 Entidades × 3 Temporalidades)
+                  Batería de 48 Tablas Excel Incluidas (16 Entidades × 3 Temporalidades)
                 </span>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
                   Full • 2021-2025 • Trend
@@ -2501,21 +2501,22 @@ export default function App() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: '#0e1526', padding: '12px', borderRadius: '8px', maxHeight: '180px', overflowY: 'auto', fontSize: '0.75rem' }}>
-                <div>📄 1. Locations.xlsx</div>
-                <div>🏢 2. Organizations.xlsx</div>
-                <div>🗺️ 3. Locations Subnational.xlsx</div>
+                <div>🌐 1. Locations.xlsx</div>
+                <div>🗺️ 2. Locations Subnational.xlsx</div>
+                <div>🏢 3. Organizations.xlsx</div>
                 <div>🤝 4. Organizations Colab.xlsx</div>
                 <div>🏭 5. Sector Types.xlsx</div>
                 <div>👥 6. Researchers.xlsx</div>
                 <div>📚 7. Publication Sources.xlsx</div>
                 <div>🏛️ 8. Funding Agencies.xlsx</div>
-                <div>🧭 9. Macro Topics.xlsx</div>
-                <div>🔬 10. Meso Topics.xlsx</div>
-                <div>🔍 11. Micro Topics.xlsx</div>
-                <div>🎯 12. Research Areas SDG.xlsx</div>
-                <div>💡 13. Concepts.xlsx</div>
-                <div>🏷️ 14. Keywords.xlsx</div>
-                <div>💰 15. Economic APC Breakdown.xlsx</div>
+                <div>🧭 9. Research Areas Domain (Nivel 1).xlsx</div>
+                <div>🔬 10. Research Areas Field (Nivel 2).xlsx</div>
+                <div>🏷️ 11. Research Areas Subfield (Nivel 3).xlsx</div>
+                <div>🔍 12. Research Areas Topic (Nivel 4).xlsx</div>
+                <div>🎯 13. Research Areas SDG (ODS).xlsx</div>
+                <div>💡 14. Concepts.xlsx</div>
+                <div>🏷️ 15. Keywords.xlsx</div>
+                <div>💰 16. Economic APC Breakdown.xlsx</div>
               </div>
             </div>
 

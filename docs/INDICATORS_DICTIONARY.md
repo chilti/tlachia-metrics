@@ -18,7 +18,7 @@ Este documento describe cada uno de los indicadores calculados en los 48 reporte
 
 ## 2. Indicadores de Impacto Normalizado y Excelencia
 
-* **`Category Normalized Citation Impact (CNCI / FWCI)`**: Impacto normalizado por campo de conocimiento, cohorte temporal y tipo documental (Línea base mundial = 1.0).
+* **`Field-Weighted Citation Impact (FWCI)`**: Impacto normalizado por campo de conocimiento, cohorte temporal y tipo documental (Línea base mundial = 1.0).
 * **`Average Percentile`**: Percentil promedio de citación normalizado por subcampo (escala 0 a 100).
 * **`Documents in Top 10%`**: Cantidad de documentos ubicados en el percentil $\ge 90$ de su disciplina/año.
 * **`% Documents in Top 10%`**: Proporción de artículos en el 10% superior de citación mundial.

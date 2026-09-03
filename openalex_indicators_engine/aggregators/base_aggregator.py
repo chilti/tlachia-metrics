@@ -94,7 +94,7 @@ class BaseAggregator:
             'times_cited': 'Times Cited',
             'cites_per_doc': 'Citation Impact',
             'pct_docs_cited': '% Docs Cited',
-            'fwci_avg': 'Category Normalized Citation Impact (CNCI / FWCI)',
+            'fwci_avg': 'Field-Weighted Citation Impact (FWCI)',
             'avg_percentile': 'Average Percentile',
             'docs_top_10': 'Documents in Top 10%',
             'pct_top_10': '% Documents in Top 10%',

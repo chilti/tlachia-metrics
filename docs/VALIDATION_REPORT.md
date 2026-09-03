@@ -42,7 +42,7 @@ Verificar la exactitud matemática, la consistencia cienciométrica y la reprodu
 ### B. Dimensión de Impacto Normalizado y Excelencia
 | Indicador | Fórmula Matemática | Valor Obtenido | Validación y Consistencia |
 |---|---|---|---|
-| **FWCI Promedio (CNCI)** | $rac{1}{N} \sum FWCI_i$ | **0.53** | Normalización por campo (Ciencias Sociales/Demografía) y año. |
+| **FWCI Promedio (FWCI)** | $\frac{1}{N} \sum FWCI_i$ | **0.53** | Normalización por campo (Ciencias Sociales/Demografía) y año. |
 | **Average Percentile** | $rac{1}{N} \sum P_i$ | **43.0** | Percentil promedio de citación ajustado a escala 0–100. |
 | **Documentos en Top 10%** | $\sum [P_i \ge 90]$ | **167 (8.35%)** | Artículos en el 10% superior de impacto mundial de su cohorte. |
 | **Documentos en Top 1%** | $\sum [P_i \ge 99]$ | **2 (0.10%)** | Trabajos de máxima excelencia científica global. |

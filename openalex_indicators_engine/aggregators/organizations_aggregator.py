@@ -82,7 +82,7 @@ class OrganizationsColabAggregator:
             'num_documents': 'Co-authored Documents',
             'times_cited': 'Times Cited',
             'cites_per_doc': 'Citation Impact',
-            'fwci_avg': 'Category Normalized Citation Impact (CNCI / FWCI)',
+            'fwci_avg': 'Field-Weighted Citation Impact (FWCI)',
             'avg_percentile': 'Average Percentile',
             'pct_top_10': '% Documents in Top 10%',
             'h_index': 'H-Index',

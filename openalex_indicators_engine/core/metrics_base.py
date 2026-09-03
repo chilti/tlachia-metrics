@@ -3,7 +3,7 @@ TlachIA Metrics - openalex_indicators_engine
 core/metrics_base.py
 Biblioteca matemática y cienciométrica vectorizada para cálculo de indicadores:
 - Volumen y Citación (Leyes de Lotka, H-Index, i10, Citas por documento)
-- Impacto Normalizado y Excelencia (FWCI/CNCI, Top 10%, Top 1%, Percentiles)
+- Impacto Normalizado y Excelencia (Field-Weighted Citation Impact - FWCI, Top 10%, Top 1%, Percentiles)
 - Economía de la Publicación (Gasto estimado en APC, Precio de lista, Ahorro Diamante)
 - Ciencia Abierta y Acceso (Diamante, Dorado, Híbrido, Verde, DOAJ, CWTS Core)
 - Liderazgo y Redes (Autor de correspondencia, Institución de correspondencia, Sur Global)
@@ -70,7 +70,7 @@ def calculate_summary_indicators(df: pd.DataFrame, entity_name: Optional[str] = 
     h_idx = calculate_h_index(cits)
     i10_idx = calculate_i10_index(cits)
 
-    # 2. Impacto Normalizado y Percentiles (FWCI / CNCI)
+    # 2. Impacto Normalizado y Percentiles (Field-Weighted Citation Impact - FWCI)
     fwci_vals = pd.to_numeric(df['fwci'], errors='coerce').fillna(0)
     fwci_avg = float(fwci_vals.sum() / n_docs)
 

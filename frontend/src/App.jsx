@@ -31,14 +31,33 @@ import {
   Library,
   Check,
   FileText,
-  Trash2
+  Trash2,
+  LogOut,
+  ShieldCheck,
+  User,
+  AlertOctagon,
+  KeyRound
 } from 'lucide-react'
+import OrcidLoginModal from './components/OrcidLoginModal'
 
 const API_BASE = ''
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('builder') // 'builder' | 'downloads'
   const [searchMode, setSearchMode] = useState('filters') // 'filters' | 'ids' | 'upload'
+
+  // User & ORCID Authentication State
+  const [user, setUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tlachia_user')
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  })
+  const [loginModalOpen, setLoginModalOpen] = useState(false)
+  const [loginModalReason, setLoginModalReason] = useState('general')
+  const [unauthorizedError, setUnauthorizedError] = useState(null)
 
   // Filters State (Cumulative Multiselect)
   const [query, setQuery] = useState('')
@@ -98,14 +117,83 @@ export default function App() {
       .catch(() => setApiOnline(false))
   }, [])
 
+  // Handle ORCID OAuth callback (?code=...) on page load
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const code = params.get('code')
+      if (code) {
+        axios.post('/api/auth/orcid/token', { code })
+          .then(res => {
+            if (res.data && res.data.orcid) {
+              const userData = {
+                orcid: res.data.orcid,
+                name: res.data.name,
+                institution: res.data.institution || '',
+                country: res.data.country || '',
+                role: res.data.role || 'user',
+                is_admin: !!res.data.is_admin,
+                access_token: res.data.access_token
+              }
+              setUser(userData)
+              localStorage.setItem('tlachia_user', JSON.stringify(userData))
+              fetchPackages(userData.orcid)
+            }
+          })
+          .catch(err => {
+            console.error('Error exchanging ORCID code:', err)
+            const errorData = err.response?.data
+            if (err.response?.status === 403 || errorData?.error === 'unauthorized_user') {
+              setUnauthorizedError(errorData?.message || `Acceso Denegado: Tu identificador ORCID (${errorData?.orcid || ''}) no está en la lista de usuarios autorizados.`)
+            } else {
+              alert('Error al autenticar con ORCID: ' + (errorData?.detail || errorData?.error || err.message))
+            }
+          })
+          .finally(() => {
+            params.delete('code')
+            params.delete('state')
+            const cleanUrl = params.toString() ? `${window.location.pathname}?${params.toString()}` : window.location.pathname
+            window.history.replaceState({}, '', cleanUrl)
+          })
+      }
+    } catch (e) {
+      console.error('ORCID callback error:', e)
+    }
+  }, [])
+
+  // Logout handler
+  const handleLogout = () => {
+    setUser(null)
+    localStorage.removeItem('tlachia_user')
+    fetchPackages(null)
+  }
+
   // Explicit Search Trigger
   const handleSearch = () => {
+    if (!user) {
+      setLoginModalReason('general')
+      setLoginModalOpen(true)
+      return
+    }
     setHasSearched(true)
     fetchPreview(1)
   }
 
+  // Open Autocomplete Entity Modal with Auth Guard
+  const openEntityModal = (entity) => {
+    if (!user) {
+      setLoginModalReason('filters')
+      setLoginModalOpen(true)
+      return
+    }
+    setModalEntity(entity)
+    setEntitySearchQuery('')
+    setEntityResults([])
+  }
+
   // Fetch Preview Works from Filters
   const fetchPreview = async (page = 1) => {
+    if (!user) return
     setPreviewLoading(true)
     try {
       const offset = (page - 1) * pageSize
@@ -132,6 +220,12 @@ export default function App() {
       setCurrentPage(page)
     } catch (err) {
       console.error('Error fetching preview:', err)
+      if (err.response?.status === 401) {
+        setUser(null)
+        localStorage.removeItem('tlachia_user')
+        setLoginModalReason('general')
+        setLoginModalOpen(true)
+      }
     } finally {
       setPreviewLoading(false)
     }
@@ -139,6 +233,11 @@ export default function App() {
 
   // Preview Direct IDs
   const handlePreviewIds = async () => {
+    if (!user) {
+      setLoginModalReason('filters')
+      setLoginModalOpen(true)
+      return
+    }
     const lines = idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
     if (lines.length === 0) return
     setPreviewLoading(true)
@@ -155,6 +254,12 @@ export default function App() {
       })
     } catch (err) {
       console.error('Error previewing IDs:', err)
+      if (err.response?.status === 401) {
+        setUser(null)
+        localStorage.removeItem('tlachia_user')
+        setLoginModalReason('general')
+        setLoginModalOpen(true)
+      }
     } finally {
       setPreviewLoading(false)
     }
@@ -162,6 +267,11 @@ export default function App() {
 
   // Upload Handler
   const handleFileUpload = async (e) => {
+    if (!user) {
+      setLoginModalReason('upload')
+      setLoginModalOpen(true)
+      return
+    }
     const file = e.target.files?.[0]
     if (!file) return
     setUploadedFile(file)
@@ -193,6 +303,10 @@ export default function App() {
       setEntityResults([])
       return
     }
+    if (!user) {
+      setEntityResults([])
+      return
+    }
     const timer = setTimeout(async () => {
       setIsSearchingEntity(true)
       try {
@@ -210,12 +324,19 @@ export default function App() {
         setEntityResults(res.data.results || [])
       } catch (err) {
         console.error('Error searching entity:', err)
+        if (err.response?.status === 401) {
+          setUser(null)
+          localStorage.removeItem('tlachia_user')
+          setModalEntity(null)
+          setLoginModalReason('filters')
+          setLoginModalOpen(true)
+        }
       } finally {
         setIsSearchingEntity(false)
       }
     }, 250)
     return () => clearTimeout(timer)
-  }, [modalEntity, entitySearchQuery])
+  }, [modalEntity, entitySearchQuery, user])
 
   // Select Entity from Modal
   const handleSelectEntity = (item) => {
@@ -242,6 +363,15 @@ export default function App() {
       package_name: packageName,
       source_mode: searchMode
     }
+
+    // Verificar que el usuario esté autenticado para procesar
+    if (!user?.orcid) {
+      setLoginModalReason('job_creation')
+      setLoginModalOpen(true)
+      return
+    }
+    payload.user_orcid = user.orcid
+    payload.user_name = user.name
 
     if (searchMode === 'filters') {
       payload.filters = {
@@ -272,7 +402,9 @@ export default function App() {
     }
 
     try {
-      const res = await axios.post('/api/jobs/create', payload)
+      const res = await axios.post('/api/jobs/create', payload, {
+        headers: user?.orcid ? { 'X-User-ORCID': user.orcid, 'X-User-Name': user.name || '' } : {}
+      })
       setActiveJob({
         job_id: res.data.job_id,
         package_name: res.data.package_name,
@@ -305,11 +437,15 @@ export default function App() {
     return () => clearInterval(interval)
   }, [activeJob])
 
-  // Fetch Packages List
-  const fetchPackages = async () => {
+  // Fetch Packages List (asociado al usuario)
+  const fetchPackages = async (overrideOrcid = undefined) => {
     setLoadingPackages(true)
     try {
-      const res = await axios.get('/api/indicators/packages')
+      const targetOrcid = overrideOrcid !== undefined ? overrideOrcid : user?.orcid
+      const url = targetOrcid ? `/api/indicators/packages?orcid=${encodeURIComponent(targetOrcid)}` : '/api/indicators/packages'
+      const res = await axios.get(url, {
+        headers: targetOrcid ? { 'X-User-ORCID': targetOrcid } : {}
+      })
       setPackages(res.data.packages || [])
     } catch (err) {
       console.error('Error loading packages:', err)
@@ -324,7 +460,10 @@ export default function App() {
       return
     }
     try {
-      await axios.delete(`/api/indicators/packages/${encodeURIComponent(packageName)}`)
+      const orcidParam = user?.orcid ? `?orcid=${encodeURIComponent(user.orcid)}` : ''
+      await axios.delete(`/api/indicators/packages/${encodeURIComponent(packageName)}${orcidParam}`, {
+        headers: user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+      })
       fetchPackages()
     } catch (err) {
       alert('Error al eliminar paquete: ' + (err.response?.data?.error || err.message))
@@ -335,7 +474,7 @@ export default function App() {
     if (activeTab === 'downloads') {
       fetchPackages()
     }
-  }, [activeTab])
+  }, [activeTab, user])
 
   // OA Badge Helper
   const renderOaBadge = (status) => {
@@ -394,17 +533,104 @@ export default function App() {
             </button>
           </nav>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              background: apiOnline ? '#10b981' : '#f43f5e',
-              boxShadow: apiOnline ? '0 0 8px #10b981' : 'none'
-            }} />
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              {apiOnline ? 'ClickHouse Online' : 'API Desconectada'}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: apiOnline ? '#10b981' : '#f43f5e',
+                boxShadow: apiOnline ? '0 0 8px #10b981' : 'none'
+              }} />
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                {apiOnline ? 'ClickHouse Online' : 'API Offline'}
+              </span>
+            </div>
+
+            {user ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '24px',
+                    padding: '4px 12px 4px 6px'
+                  }}
+                  title={`${user.name}\n${user.institution || ''} ${user.country || ''}\nORCID: ${user.orcid}`}
+                >
+                  <div
+                    style={{
+                      width: '24px',
+                      height: '24px',
+                      borderRadius: '50%',
+                      backgroundColor: 'rgba(166, 206, 57, 0.2)',
+                      border: '1.5px solid #a6ce39',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#a6ce39',
+                      fontWeight: '800',
+                      fontSize: '11px'
+                    }}
+                  >
+                    iD
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#fff', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {user.name}
+                    </span>
+                    <span style={{ fontSize: '0.66rem', color: user.is_admin ? '#38bdf8' : 'var(--text-dim)' }}>
+                      {user.is_admin ? '⚡ Administrador' : 'Investigador'}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleLogout}
+                  title="Cerrar sesión"
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    color: '#f87171',
+                    borderRadius: '8px',
+                    padding: '6px 8px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <LogOut size={15} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setLoginModalReason('general')
+                  setLoginModalOpen(true)
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  backgroundColor: 'rgba(166, 206, 57, 0.15)',
+                  border: '1px solid #a6ce39',
+                  color: '#a6ce39',
+                  fontSize: '0.82rem',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <span style={{ fontWeight: '900', fontSize: '13px' }}>iD</span>
+                <span>Conectar ORCID</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -502,7 +728,7 @@ export default function App() {
                         <button
                           className="btn btn-secondary"
                           style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                          onClick={() => setModalEntity('topic')}
+                          onClick={() => openEntityModal('topic')}
                         >
                           <Compass size={16} color="var(--accent-primary)" />
                           + Filtrar por Tópico ({selectedTopics.length})
@@ -545,7 +771,7 @@ export default function App() {
                         <button
                           className="btn btn-secondary"
                           style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                          onClick={() => setModalEntity('source')}
+                          onClick={() => openEntityModal('source')}
                         >
                           <BookOpen size={16} color="#fbbf24" />
                           + Filtrar por Revista / Fuente ({selectedSources.length})
@@ -567,7 +793,7 @@ export default function App() {
                         <button
                           className="btn btn-secondary"
                           style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                          onClick={() => setModalEntity('institution')}
+                          onClick={() => openEntityModal('institution')}
                         >
                           <Building2 size={16} color="#34d399" />
                           + Filtrar por Institución ({selectedInstitutions.length})
@@ -610,7 +836,7 @@ export default function App() {
                         <button
                           className="btn btn-secondary"
                           style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                          onClick={() => setModalEntity('author')}
+                          onClick={() => openEntityModal('author')}
                         >
                           <Users size={16} color="#a78bfa" />
                           + Filtrar por Investigador ({selectedAuthors.length})
@@ -656,7 +882,7 @@ export default function App() {
                     <button
                       className="btn btn-secondary"
                       style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                      onClick={() => setModalEntity('country')}
+                      onClick={() => openEntityModal('country')}
                     >
                       <Globe2 size={16} color="#38bdf8" />
                       + Agregar País ({selectedCountries.length})
@@ -733,7 +959,7 @@ export default function App() {
                           className="input-text"
                           min="1900"
                           max="2026"
-                          disabled={allYears}
+                          disabled={allYears || !user}
                           value={startYear}
                           onChange={(e) => setStartYear(parseInt(e.target.value) || 1970)}
                         />
@@ -745,19 +971,20 @@ export default function App() {
                           className="input-text"
                           min="1900"
                           max="2026"
-                          disabled={allYears}
+                          disabled={allYears || !user}
                           value={endYear}
                           onChange={(e) => setEndYear(parseInt(e.target.value) || 2026)}
                         />
                       </div>
                     </div>
                     <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--text-main)', userSelect: 'none' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: user ? 'pointer' : 'not-allowed', fontSize: '0.78rem', color: 'var(--text-main)', userSelect: 'none' }}>
                         <input
                           type="checkbox"
                           checked={allYears}
+                          disabled={!user}
                           onChange={(e) => setAllYears(e.target.checked)}
-                          style={{ cursor: 'pointer', accentColor: 'var(--accent-primary)', width: '15px', height: '15px' }}
+                          style={{ cursor: user ? 'pointer' : 'not-allowed', accentColor: 'var(--accent-primary)', width: '15px', height: '15px' }}
                         />
                         <span>Todo (Histórico completo)</span>
                       </label>
@@ -770,7 +997,7 @@ export default function App() {
                     <button
                       className="btn btn-secondary"
                       style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
-                      onClick={() => setModalEntity('work_type')}
+                      onClick={() => openEntityModal('work_type')}
                     >
                       <FileText size={16} color="#fb7185" />
                       + Tipo de Documento ({selectedTypes.length})
@@ -810,12 +1037,24 @@ export default function App() {
                   {/* Search Button in Sidebar */}
                   <button
                     className="btn btn-primary"
-                    style={{ width: '100%', marginTop: '14px', padding: '12px', fontSize: '0.9rem' }}
+                    style={{
+                      width: '100%',
+                      marginTop: '14px',
+                      padding: '12px',
+                      fontSize: '0.9rem',
+                      backgroundColor: user ? undefined : 'rgba(166, 206, 57, 0.2)',
+                      color: user ? undefined : '#a6ce39',
+                      border: user ? undefined : '1px solid #a6ce39'
+                    }}
                     onClick={handleSearch}
                     disabled={previewLoading}
                   >
-                    {previewLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                    Buscar en OpenAlex
+                    {user ? (
+                      previewLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />
+                    ) : (
+                      <span style={{ fontWeight: '900', fontSize: '13px', marginRight: '6px' }}>iD</span>
+                    )}
+                    {user ? 'Buscar en OpenAlex' : 'Conectar ORCID para Buscar'}
                   </button>
                 </>
               )}
@@ -825,9 +1064,16 @@ export default function App() {
                   <label className="filter-label">Lista de DOIs o IDs OpenAlex</label>
                   <textarea
                     className="input-text"
-                    style={{ minHeight: '180px', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}
-                    placeholder="Pega aquí DOIs o IDs separados por comas o saltos de línea:&#10;10.1016/j.jclinepi.2020.08.012&#10;W3023041060&#10;W4288109921"
+                    style={{ minHeight: '180px', fontFamily: 'var(--font-mono)', fontSize: '0.8rem', cursor: user ? 'text' : 'not-allowed' }}
+                    placeholder={user ? "Pega aquí DOIs o IDs separados por comas o saltos de línea:&#10;10.1016/j.jclinepi.2020.08.012&#10;W3023041060&#10;W4288109921" : "🔒 Inicia sesión con ORCID para consultar identificadores..."}
                     value={idsText}
+                    disabled={!user}
+                    onClick={() => {
+                      if (!user) {
+                        setLoginModalReason('filters')
+                        setLoginModalOpen(true)
+                      }
+                    }}
                     onChange={(e) => setIdsText(e.target.value)}
                   />
                   <button className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }} onClick={handlePreviewIds} disabled={previewLoading}>
@@ -847,9 +1093,16 @@ export default function App() {
                       padding: '24px 16px',
                       textAlign: 'center',
                       background: 'rgba(14, 21, 38, 0.5)',
-                      cursor: 'pointer'
+                      cursor: user ? 'pointer' : 'not-allowed'
                     }}
-                    onClick={() => document.getElementById('file-upload-input').click()}
+                    onClick={() => {
+                      if (!user) {
+                        setLoginModalReason('upload')
+                        setLoginModalOpen(true)
+                        return
+                      }
+                      document.getElementById('file-upload-input').click()
+                    }}
                   >
                     <UploadCloud size={32} color="var(--accent-primary)" style={{ margin: '0 auto 8px' }} />
                     <p style={{ fontSize: '0.85rem', fontWeight: 600 }}>Selecciona un archivo</p>
@@ -861,6 +1114,7 @@ export default function App() {
                       type="file"
                       accept=".json,.jsonl,.csv,.parquet"
                       style={{ display: 'none' }}
+                      disabled={!user}
                       onChange={handleFileUpload}
                     />
                   </div>
@@ -881,6 +1135,60 @@ export default function App() {
 
             {/* Main Content Area */}
             <div className="content-area">
+              {!user && (
+                <div className="glass-panel" style={{
+                  padding: '32px 28px',
+                  textAlign: 'center',
+                  background: 'linear-gradient(135deg, rgba(166, 206, 57, 0.1) 0%, rgba(14, 21, 38, 0.95) 100%)',
+                  border: '1.5px solid rgba(166, 206, 57, 0.35)',
+                  borderRadius: '16px',
+                  marginBottom: '20px'
+                }}>
+                  <div style={{
+                    width: '56px',
+                    height: '56px',
+                    borderRadius: '50%',
+                    backgroundColor: 'rgba(166, 206, 57, 0.15)',
+                    border: '2px solid #a6ce39',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#a6ce39',
+                    fontWeight: '900',
+                    fontSize: '22px',
+                    margin: '0 auto 14px',
+                    boxShadow: '0 0 20px rgba(166, 206, 57, 0.25)'
+                  }}>
+                    iD
+                  </div>
+                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
+                    Controles Bloqueados — Autenticación Requerida
+                  </h3>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', maxWidth: '560px', margin: '0 auto 20px', lineHeight: 1.5 }}>
+                    Para interactuar con los filtros de países, revistas, instituciones o tópicos, conformar corpus analíticos y descargar la batería de 48 libros cienciométricos, debes iniciar sesión con una cuenta autorizada de ORCID.
+                  </p>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setLoginModalReason('general')
+                      setLoginModalOpen(true)
+                    }}
+                    style={{
+                      backgroundColor: '#a6ce39',
+                      color: '#111827',
+                      padding: '12px 26px',
+                      fontSize: '0.92rem',
+                      fontWeight: 800,
+                      margin: '0 auto',
+                      boxShadow: '0 4px 16px rgba(166, 206, 57, 0.35)'
+                    }}
+                  >
+                    <span style={{ fontWeight: '900', fontSize: '15px' }}>iD</span>
+                    Conectar Identificador ORCID
+                  </button>
+                </div>
+              )}
+
               {/* Search Hero */}
               {searchMode === 'filters' && (
                 <div className="glass-panel search-hero">
@@ -889,9 +1197,16 @@ export default function App() {
                     <input
                       type="text"
                       className="search-input"
-                      style={{ paddingRight: '120px' }}
-                      placeholder="Buscar por título, palabras clave, conceptos o tema..."
+                      style={{ paddingRight: '120px', cursor: user ? 'text' : 'pointer' }}
+                      placeholder={user ? "Buscar por título, palabras clave, conceptos o tema..." : "🔒 Inicia sesión con ORCID para buscar en OpenAlex..."}
                       value={query}
+                      disabled={!user}
+                      onClick={() => {
+                        if (!user) {
+                          setLoginModalReason('general')
+                          setLoginModalOpen(true)
+                        }
+                      }}
                       onChange={(e) => setQuery(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
                     />
@@ -1018,6 +1333,7 @@ export default function App() {
                     className="input-text"
                     style={{ width: '220px', background: '#0e1526' }}
                     placeholder="Nombre del Paquete"
+                    disabled={!user}
                     value={packageName}
                     onChange={(e) => setPackageName(e.target.value)}
                   />
@@ -1025,7 +1341,14 @@ export default function App() {
                     className="btn btn-primary"
                     style={{ padding: '12px 24px', fontSize: '0.95rem' }}
                     disabled={previewData.total === 0 || previewLoading}
-                    onClick={handleLaunchCalculation}
+                    onClick={() => {
+                      if (!user) {
+                        setLoginModalReason('job_creation')
+                        setLoginModalOpen(true)
+                        return
+                      }
+                      handleLaunchCalculation()
+                    }}
                   >
                     <Sparkles size={18} />
                     Calcular Métricas (48 Tablas)
@@ -1186,18 +1509,92 @@ export default function App() {
         ) : (
           /* Downloads Hub Tab */
           <div style={{ marginTop: '24px', marginBottom: '48px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
               <div>
-                <h2 style={{ fontSize: '1.4rem', fontWeight: 800 }}>Centro de Paquetes Generados (.ZIP)</h2>
+                <h2 style={{ fontSize: '1.4rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {user ? (
+                    user.is_admin ? (
+                      <>
+                        <ShieldCheck size={24} color="#38bdf8" />
+                        Centro Global de Paquetes (.ZIP) — Admin
+                      </>
+                    ) : (
+                      <>
+                        <FolderArchive size={24} color="var(--accent-primary)" />
+                        Tus Paquetes Generados ({user.name})
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <FolderArchive size={24} color="var(--accent-primary)" />
+                      Centro de Paquetes Generados (.ZIP)
+                    </>
+                  )}
+                </h2>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)' }}>
-                  Descarga directa de los 48 libros Excel estilizados, el archivo JSON de OpenAlex y tablas Parquet.
+                  {user ? (
+                    user.is_admin ? (
+                      `Visualizando todos los paquetes disponibles en el sistema (${packages.length} paquetes).`
+                    ) : (
+                      `Descarga y gestión de tus 48 libros Excel, JSON OpenAlex y Parquets asociados a tu ORCID (${user.orcid}).`
+                    )
+                  ) : (
+                    'Conéctate con ORCID para asociar, almacenar y visualizar tus paquetes cienciométricos personales.'
+                  )}
                 </p>
               </div>
-              <button className="btn btn-secondary" onClick={fetchPackages}>
-                <RefreshCw size={16} />
-                Actualizar Lista
-              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {!user && (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setLoginModalReason('downloads')
+                      setLoginModalOpen(true)
+                    }}
+                    style={{ backgroundColor: '#a6ce39', color: '#111827' }}
+                  >
+                    <span style={{ fontWeight: '900' }}>iD</span>
+                    Conectar ORCID
+                  </button>
+                )}
+                <button className="btn btn-secondary" onClick={() => fetchPackages()}>
+                  <RefreshCw size={16} />
+                  Actualizar Lista
+                </button>
+              </div>
             </div>
+
+            {!user && (
+              <div style={{
+                background: 'rgba(56, 189, 248, 0.08)',
+                border: '1px solid rgba(56, 189, 248, 0.25)',
+                borderRadius: '12px',
+                padding: '16px 20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '16px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <KeyRound size={24} color="#38bdf8" />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#fff' }}>Centro de Descargas Personalizado</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Para mantener tus paquetes organizados y privados, inicia sesión con tu identificador académico de ORCID.</div>
+                  </div>
+                </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setLoginModalReason('downloads')
+                    setLoginModalOpen(true)
+                  }}
+                  style={{ backgroundColor: '#a6ce39', color: '#111827', whiteSpace: 'nowrap' }}
+                >
+                  Identificarse
+                </button>
+              </div>
+            )}
 
             {loadingPackages ? (
               <div style={{ textAlign: 'center', padding: '60px' }}>
@@ -1207,9 +1604,13 @@ export default function App() {
             ) : packages.length === 0 ? (
               <div className="glass-panel" style={{ padding: '60px', textAlign: 'center' }}>
                 <FolderArchive size={48} color="var(--text-dim)" style={{ margin: '0 auto 16px' }} />
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Aún no hay paquetes calculados</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '6px', maxWidth: '420px', margin: '6px auto 16px' }}>
-                  Conforma un corpus en la pestaña anterior y presiona "Calcular Métricas" para generar tu primer paquete cienciométrico.
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
+                  {user ? 'Aún no has generado paquetes de métricas' : 'Aún no hay paquetes calculados'}
+                </h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '6px', maxWidth: '440px', margin: '6px auto 16px' }}>
+                  {user
+                    ? 'Conforma un corpus en la pestaña anterior y calcula los indicadores para guardarlos en tu centro de descargas.'
+                    : 'Inicia sesión con tu ORCID y conforma un corpus para generar tu primer paquete cienciométrico.'}
                 </p>
                 <button className="btn btn-primary" onClick={() => setActiveTab('builder')}>
                   Ir al Conformador de Corpus
@@ -1230,7 +1631,17 @@ export default function App() {
                         <span className="badge badge-green">Listo</span>
                       </div>
 
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '12px' }}>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
+                        {pkg.owner_name || pkg.owner_orcid ? (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.03)', padding: '3px 6px', borderRadius: '4px' }}>
+                            <span>Investigador:</span>
+                            <strong style={{ color: pkg.is_owner ? '#a6ce39' : '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <User size={12} />
+                              {pkg.owner_name || pkg.owner_orcid} {pkg.is_owner ? '(Tú)' : ''}
+                            </strong>
+                          </div>
+                        ) : null}
+
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span>Documentos Usados:</span>
                           <strong style={{ color: '#38bdf8', fontFamily: 'var(--font-mono)' }}>
@@ -1690,6 +2101,52 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Modal de Conexión ORCID */}
+      <OrcidLoginModal
+        isOpen={loginModalOpen}
+        onClose={() => setLoginModalOpen(false)}
+        reason={loginModalReason}
+      />
+
+      {/* Modal de Acceso Denegado (Segunda Verificación Fallida) */}
+      {unauthorizedError && (
+        <div className="modal-backdrop" onClick={() => setUnauthorizedError(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px', textAlign: 'center', padding: '36px' }}>
+            <div style={{
+              width: '60px',
+              height: '60px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(239, 68, 68, 0.15)',
+              border: '2px solid #ef4444',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px',
+              color: '#ef4444'
+            }}>
+              <AlertOctagon size={32} />
+            </div>
+
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '10px', color: '#fff' }}>
+              Acceso Restringido
+            </h3>
+
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: '1.6', marginBottom: '24px' }}>
+              {unauthorizedError}
+            </p>
+
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center', padding: '12px' }}
+              onClick={() => setUnauthorizedError(null)}
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+

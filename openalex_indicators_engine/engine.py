@@ -23,7 +23,8 @@ from .aggregators.researchers_aggregator import ResearchersAggregator
 from .aggregators.sources_aggregator import SourcesAggregator
 from .aggregators.funding_aggregator import FundingAggregator
 from .aggregators.taxonomy_aggregator import (
-    MacroTopicsAggregator, MesoTopicsAggregator, MicroTopicsAggregator, ESIAggregator, SDGAggregator
+    DomainAggregator, FieldAggregator, SubfieldAggregator, TopicAggregator, ESIAggregator, SDGAggregator,
+    MacroTopicsAggregator, MesoTopicsAggregator, MicroTopicsAggregator  # backwards-compat aliases
 )
 from .aggregators.concepts_keywords_aggregator import ConceptsAggregator, KeywordsAggregator
 from .aggregators.economic_apc_aggregator import EconomicAPCAggregator
@@ -103,9 +104,10 @@ class TlachIAMetricsEngine:
             'Researchers': ResearchersAggregator(),
             'Publication Sources': SourcesAggregator(),
             'Funding Agencies': FundingAggregator(),
-            'Research Areas Macro Topics': MacroTopicsAggregator(),
-            'Research Areas Meso Topics': MesoTopicsAggregator(),
-            'Research Areas Micro Topics': MicroTopicsAggregator(),
+            'Research Areas Domain': DomainAggregator(),
+            'Research Areas Field': FieldAggregator(),
+            'Research Areas Subfield': SubfieldAggregator(),
+            'Research Areas Topic': TopicAggregator(),
             'Research Areas ESI': ESIAggregator(),
             'Research Areas SDG': SDGAggregator(),
             'Concepts': ConceptsAggregator(),

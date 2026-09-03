@@ -510,4 +510,63 @@ class CorpusBuilder:
             if col not in df.columns:
                 df[col] = '' if 'name' in col or 'id' in col or 'title' in col else None
 
+        df = self._enrich_source_names(df)
+        return df
+
+    def _enrich_source_names(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Enriquece la columna source_name consultando la tabla sources para los source_id del corpus."""
+        if df is None or len(df) == 0 or 'source_id' not in df.columns:
+            return df
+
+        # Verificar si source_name está ausente o mayoritariamente vacío
+        needs_enrich = False
+        if 'source_name' not in df.columns:
+            needs_enrich = True
+            df['source_name'] = ''
+        else:
+            non_empty = df['source_name'].dropna().astype(str).str.strip()
+            non_empty = non_empty[~non_empty.isin(['', 'nan', 'None'])]
+            if len(non_empty) == 0:
+                needs_enrich = True
+
+        if not needs_enrich:
+            return df
+
+        raw_ids = df['source_id'].dropna().unique().tolist()
+        clean_ids = set()
+        for s in raw_ids:
+            s_str = str(s).strip()
+            if s_str and s_str not in ('', 'nan', 'None'):
+                clean_ids.add(s_str)
+                if s_str.startswith('https://openalex.org/'):
+                    clean_ids.add(s_str.replace('https://openalex.org/', ''))
+                else:
+                    clean_ids.add(f"https://openalex.org/{s_str}")
+
+        if not clean_ids:
+            return df
+
+        try:
+            id_to_name = {}
+            clean_list = list(clean_ids)
+            chunk_size = 500
+            for i in range(0, len(clean_list), chunk_size):
+                chunk = clean_list[i:i+chunk_size]
+                quoted = ", ".join(f"'{sid}'" for sid in chunk)
+                sql = f"SELECT id, display_name FROM sources WHERE id IN ({quoted}) AND display_name != ''"
+                sources_df = self.engine.query_df(sql)
+                if len(sources_df) > 0:
+                    for _, row in sources_df.iterrows():
+                        sid = str(row['id']).strip()
+                        sname = str(row['display_name']).strip()
+                        if sid and sname:
+                            id_to_name[sid] = sname
+                            id_to_name[sid.replace('https://openalex.org/', '')] = sname
+                            id_to_name[f"https://openalex.org/{sid.replace('https://openalex.org/', '')}"] = sname
+
+            if id_to_name:
+                df['source_name'] = df['source_id'].map(lambda sid: id_to_name.get(str(sid).strip(), ''))
+        except Exception as e:
+            logger.warning(f"No se pudo enriquecer source_name desde ClickHouse: {e}")
+
         return df

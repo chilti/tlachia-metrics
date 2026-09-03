@@ -23,19 +23,37 @@ from typing import Dict, Any, Optional, List
 import httpx
 import pandas as pd
 from starlette.applications import Starlette
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 from starlette.requests import Request
 from starlette.responses import JSONResponse, FileResponse, Response
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.staticfiles import StaticFiles
 
 # Rutas del sistema
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
+FRONTEND_DIST = ROOT_DIR / 'frontend' / 'dist'
 
 from openalex_indicators_engine import TlachIAMetricsEngine
 from openalex_indicators_engine.core.config import EXPORTS_DIR, OPENALEX_LOCAL_API, CACHE_DIR
 from openalex_indicators_engine.core.corpus_builder import CorpusBuilder
+
+from api.db_users import (
+    register_user_package,
+    get_package_owner_info,
+    delete_user_package_record,
+    is_user_authorized,
+    is_user_admin
+)
+from api.routers.auth import (
+    get_orcid_auth_url,
+    exchange_orcid_token,
+    list_registered_users,
+    get_current_user_profile
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 logger = logging.getLogger('tlachia_api')
@@ -60,12 +78,26 @@ async def health_check(request: Request):
     })
 
 
+def _check_auth(request: Request) -> Optional[str]:
+    """Valida si la petición proviene de un usuario ORCID autorizado."""
+    orcid = request.headers.get('X-User-ORCID', '').strip()
+    if not orcid:
+        orcid = request.query_params.get('orcid', '').strip()
+    if orcid and is_user_authorized(orcid):
+        return orcid
+    return None
+
+
 # --- Autocompletado y Búsqueda de Entidades ---
 async def search_entities(request: Request):
     """
     Busca tópicos, revistas/fuentes, instituciones o autores.
-    Usa la API OpenAlex local (puerto 5012) con fallback a ClickHouse.
+    Requiere que el usuario esté autenticado con ORCID.
     """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.', 'results': []}, status_code=401)
+
     entity_type = request.query_params.get('type', 'topics').strip().lower()
     query = request.query_params.get('q', '').strip()
     limit = int(request.query_params.get('limit', 10))
@@ -280,7 +312,12 @@ async def search_entities(request: Request):
 async def preview_corpus(request: Request):
     """
     Recibe filtros de búsqueda y devuelve el conteo total estimado y una muestra paginada de artículos.
+    Requiere autenticación ORCID.
     """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID para consultar el corpus.', 'total': 0, 'results': []}, status_code=401)
+
     try:
         body = await request.json()
     except Exception:
@@ -300,7 +337,12 @@ async def preview_corpus(request: Request):
 async def preview_ids(request: Request):
     """
     Resuelve una lista de DOIs o IDs de OpenAlex y devuelve los artículos encontrados.
+    Requiere autenticación ORCID.
     """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.', 'total': 0, 'results': []}, status_code=401)
+
     try:
         body = await request.json()
     except Exception:
@@ -352,7 +394,11 @@ async def preview_ids(request: Request):
 async def upload_corpus_preview(request: Request):
     """
     Permite subir un archivo JSON, CSV o Parquet para vista previa y procesamiento posterior.
+    Requiere autenticación ORCID.
     """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.', 'total': 0, 'results': []}, status_code=401)
     form = await request.form()
     uploaded_file = form.get('file')
     if not uploaded_file:
@@ -514,6 +560,9 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
         )
 
         strategy = build_search_strategy_summary(source_mode, payload)
+        owner_orcid = payload.get('user_orcid') or ''
+        owner_name = payload.get('user_name') or ''
+        
         manifest_data = {
             'package_name': package_name,
             'total_works': len(df),
@@ -524,7 +573,9 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             'created_at': datetime.now().isoformat(),
             'total_excel_files': result.get('total_excel_files', 48),
             'tables_summary': result.get('tables_summary', {}),
-            'search_strategy': strategy
+            'search_strategy': strategy,
+            'owner_orcid': owner_orcid,
+            'owner_name': owner_name
         }
         manifest_file = EXPORTS_DIR / package_name / "manifest.json"
         try:
@@ -532,6 +583,22 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
                 json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.warning(f"No se pudo guardar manifest.json: {e}")
+
+        # Registrar en la base de datos de usuarios si hay propietario
+        if owner_orcid:
+            try:
+                zip_p = EXPORTS_DIR / package_name / f"{package_name}.zip"
+                size_b = zip_p.stat().st_size if zip_p.exists() else 0
+                register_user_package(
+                    package_name=package_name,
+                    owner_orcid=owner_orcid,
+                    owner_name=owner_name,
+                    total_works=len(df),
+                    zip_size_bytes=size_b,
+                    source_mode=source_mode
+                )
+            except Exception as e:
+                logger.warning(f"Error registrando pertenencia en BD: {e}")
 
         with JOBS_LOCK:
             JOBS_STORE[job_id]['status'] = 'completed'
@@ -545,7 +612,9 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
                 'zip_path': result.get('zip_path'),
                 'download_url': f"/api/indicators/download/{package_name}",
                 'tables_summary': result.get('tables_summary', {}),
-                'search_strategy': strategy
+                'search_strategy': strategy,
+                'owner_orcid': owner_orcid,
+                'owner_name': owner_name
             }
 
     except Exception as e:
@@ -560,12 +629,21 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
 
 async def create_computation_job(request: Request):
     """
-    Inicia una tarea de cálculo de métricas en segundo plano.
+    Inicia una tarea de cálculo de métricas en segundo plano asociándola al investigador autenticado.
     """
     try:
         payload = await request.json()
     except Exception:
         return JSONResponse({'error': 'JSON payload inválido.'}, status_code=400)
+
+    # Extraer ORCID del creador desde cabeceras o payload
+    user_orcid = payload.get('user_orcid') or request.headers.get('X-User-ORCID', '').strip()
+    if not user_orcid or not is_user_authorized(user_orcid):
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con una cuenta ORCID autorizada para calcular indicadores.'}, status_code=401)
+
+    user_name = payload.get('user_name') or request.headers.get('X-User-Name', '').strip() or user_orcid
+    payload['user_orcid'] = user_orcid
+    payload['user_name'] = user_name
 
     job_id = f"job_{uuid.uuid4().hex[:12]}"
     package_name = payload.get('package_name', '').strip().replace(' ', '_')
@@ -583,7 +661,9 @@ async def create_computation_job(request: Request):
         'completed_at': None,
         'total_works': 0,
         'result': None,
-        'error': None
+        'error': None,
+        'user_orcid': user_orcid,
+        'user_name': user_name
     }
 
     with JOBS_LOCK:
@@ -597,7 +677,8 @@ async def create_computation_job(request: Request):
         'job_id': job_id,
         'package_name': package_name,
         'status': 'queued',
-        'message': 'Tarea de cálculo iniciada en segundo plano.'
+        'message': 'Tarea de cálculo iniciada en segundo plano.',
+        'owner_orcid': user_orcid
     })
 
 
@@ -621,7 +702,10 @@ async def list_jobs(request: Request):
 
 # --- Descarga y Exploración de Paquetes Generados ---
 async def list_exported_packages(request: Request):
-    """Lista todos los paquetes .ZIP generados disponibles en disco con metadatos completos."""
+    """Lista los paquetes disponibles. Si el usuario no es admin, filtra exclusivamente los suyos."""
+    requester_orcid = request.query_params.get('orcid') or request.headers.get('X-User-ORCID', '').strip()
+    is_admin = is_user_admin(requester_orcid) if requester_orcid else False
+
     packages = []
     if EXPORTS_DIR.exists():
         for item in EXPORTS_DIR.iterdir():
@@ -643,8 +727,19 @@ async def list_exported_packages(request: Request):
                         except Exception:
                             pass
                     
+                    owner_info = get_package_owner_info(item.name)
+                    pkg_owner_orcid = manifest_data.get('owner_orcid') or owner_info.get('owner_orcid', '')
+                    pkg_owner_name = manifest_data.get('owner_name') or owner_info.get('owner_name', '')
+
+                    # Filtrado de visibilidad:
+                    # - Si es admin: ve todo
+                    # - Si es usuario regular autenticado: solo ve sus paquetes (o sin dueño si coincide)
+                    # - Si no está autenticado: no ve paquetes ajenos con dueño
+                    if requester_orcid and not is_admin:
+                        if pkg_owner_orcid and pkg_owner_orcid != requester_orcid:
+                            continue
+
                     total_works = manifest_data.get('total_works')
-                    # Si no hay manifest pero hay JSON, estimar o leer total de obras
                     if total_works is None and json_file.exists():
                         try:
                             with open(json_file, 'r', encoding='utf-8') as jf:
@@ -666,11 +761,19 @@ async def list_exported_packages(request: Request):
                         'filters': manifest_data.get('filters', {}),
                         'search_strategy': manifest_data.get('search_strategy', {}),
                         'tables_summary': manifest_data.get('tables_summary', {}),
+                        'owner_orcid': pkg_owner_orcid,
+                        'owner_name': pkg_owner_name,
+                        'is_owner': (requester_orcid == pkg_owner_orcid) if requester_orcid else False,
                         'download_url': f"/api/indicators/download/{item.name}"
                     })
     
     packages.sort(key=lambda x: x['created_at'], reverse=True)
-    return JSONResponse({'packages': packages})
+    return JSONResponse({
+        'packages': packages,
+        'requester_orcid': requester_orcid,
+        'is_admin': is_admin,
+        'total_count': len(packages)
+    })
 
 
 async def download_indicators_zip(request: Request):
@@ -690,18 +793,36 @@ async def download_indicators_zip(request: Request):
 
 
 async def delete_exported_package(request: Request):
-    """Elimina un paquete generado y sus archivos asociados del disco."""
+    """Elimina un paquete generado y sus archivos asociados del disco con verificación de propietario/admin."""
     package_name = request.path_params.get('package_name', '').strip()
     if not package_name or '..' in package_name or '/' in package_name or '\\' in package_name:
         return JSONResponse({'error': 'Nombre de paquete no válido.'}, status_code=400)
     
+    requester_orcid = request.query_params.get('orcid') or request.headers.get('X-User-ORCID', '').strip()
+    is_admin = is_user_admin(requester_orcid) if requester_orcid else False
+
     target_dir = EXPORTS_DIR / package_name
     if not target_dir.exists():
         return JSONResponse({'error': f"Paquete '{package_name}' no encontrado en disco."}, status_code=404)
     
+    manifest_file = target_dir / "manifest.json"
+    pkg_owner_orcid = ""
+    if manifest_file.exists():
+        try:
+            with open(manifest_file, 'r', encoding='utf-8') as mf:
+                pkg_owner_orcid = json.load(mf).get('owner_orcid', '')
+        except Exception:
+            pass
+    if not pkg_owner_orcid:
+        pkg_owner_orcid = get_package_owner_info(package_name).get('owner_orcid', '')
+
+    if pkg_owner_orcid and not is_admin and requester_orcid != pkg_owner_orcid:
+        return JSONResponse({'error': 'No tienes permisos para eliminar este paquete.'}, status_code=403)
+
     try:
         shutil.rmtree(str(target_dir))
-        logger.info(f"Paquete eliminado de disco: {package_name}")
+        delete_user_package_record(package_name)
+        logger.info(f"Paquete eliminado de disco: {package_name} por {requester_orcid or 'anónimo'}")
         return JSONResponse({
             'success': True,
             'message': f"Paquete '{package_name}' eliminado exitosamente del disco.",
@@ -712,9 +833,43 @@ async def delete_exported_package(request: Request):
         return JSONResponse({'error': f"Error al eliminar paquete: {str(e)}"}, status_code=500)
 
 
+# --- Middleware y Servidor de Frontend Estático ---
+class ProxyPrefixMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.scope.get('path', '')
+        for prefix in ('/tlachia-metrics', '/tlachiametrics', '/tlachia_metrics', '/tlachia'):
+            if path.startswith(prefix + '/'):
+                request.scope['path'] = path[len(prefix):]
+                break
+            elif path == prefix:
+                request.scope['path'] = '/'
+                break
+        return await call_next(request)
+
+
+async def serve_frontend(request: Request):
+    full_path = request.path_params.get('full_path', '').lstrip('/')
+    if full_path:
+        file_path = FRONTEND_DIST / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+    index_file = FRONTEND_DIST / 'index.html'
+    if index_file.exists():
+        return FileResponse(index_file)
+    return JSONResponse({
+        'status': 'online',
+        'app': 'TlachIA Metrics API',
+        'version': '1.0.0'
+    })
+
+
 # --- Definición de Rutas ASGI ---
 routes = [
     Route('/api/health', health_check, methods=['GET']),
+    Route('/api/auth/orcid/url', get_orcid_auth_url, methods=['GET']),
+    Route('/api/auth/orcid/token', exchange_orcid_token, methods=['POST']),
+    Route('/api/auth/users', list_registered_users, methods=['GET']),
+    Route('/api/auth/me', get_current_user_profile, methods=['GET']),
     Route('/api/entities/search', search_entities, methods=['GET']),
     Route('/api/corpus/preview', preview_corpus, methods=['POST']),
     Route('/api/corpus/preview-ids', preview_ids, methods=['POST']),
@@ -728,14 +883,23 @@ routes = [
     Route('/api/indicators/download/{package_name}', download_indicators_zip, methods=['GET']),
 ]
 
+if FRONTEND_DIST.exists():
+    assets_dir = FRONTEND_DIST / 'assets'
+    if assets_dir.exists():
+        routes.append(Mount('/assets', StaticFiles(directory=str(assets_dir)), name='static'))
+    routes.append(Route('/', serve_frontend, methods=['GET']))
+    routes.append(Route('/{full_path:path}', serve_frontend, methods=['GET']))
+
 middleware = [
+    Middleware(ProxyPrefixMiddleware),
     Middleware(
         CORSMiddleware,
         allow_origins=['*'],
         allow_credentials=True,
         allow_methods=['*'],
         allow_headers=['*']
-    )
+    ),
+    Middleware(GZipMiddleware, minimum_size=1000)
 ]
 
 app = Starlette(

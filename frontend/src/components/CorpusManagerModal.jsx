@@ -16,7 +16,10 @@ import {
   Filter,
   Star,
   FileCode2,
-  Hash
+  Hash,
+  FileSpreadsheet,
+  RefreshCw,
+  Plus
 } from 'lucide-react'
 
 export default function CorpusManagerModal({
@@ -25,6 +28,8 @@ export default function CorpusManagerModal({
   mode = 'list', // 'list' | 'save'
   currentCorpusState = {},
   onLoadCorpus,
+  onOpenTables,
+  packages = [],
   user
 }) {
   const [activeTab, setActiveTab] = useState(mode)
@@ -34,16 +39,19 @@ export default function CorpusManagerModal({
   const [successMsg, setSuccessMsg] = useState(null)
 
   // Save Form State
-  const [corpusName, setCorpusName] = useState(currentCorpusState.corpusName || '')
+  const [corpusName, setCorpusName] = useState('')
   const [description, setDescription] = useState('')
+  const [saveAsNew, setSaveAsNew] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
     setActiveTab(mode)
-    if (mode === 'save' && currentCorpusState.corpusName) {
-      setCorpusName(currentCorpusState.corpusName)
+    if (mode === 'save') {
+      setCorpusName(currentCorpusState.corpusName || '')
+      setDescription(currentCorpusState.description || '')
+      setSaveAsNew(false)
     }
-  }, [mode, currentCorpusState])
+  }, [mode, currentCorpusState, isOpen])
 
   useEffect(() => {
     if (isOpen) {
@@ -100,13 +108,18 @@ export default function CorpusManagerModal({
     setIsSaving(true)
     setError(null)
 
+    const corpusIdToSave = (!saveAsNew && currentCorpusState.corpusId) ? currentCorpusState.corpusId : null
+
     const payload = {
+      corpus_id: corpusIdToSave,
       corpus_name: corpusName.trim(),
       description: description.trim(),
       source_mode: currentCorpusState.sourceMode || 'filters',
       filters: currentCorpusState.filters || {},
       ids_list: currentCorpusState.idsList || [],
       total_works_estimated: currentCorpusState.totalWorksEstimated || 0,
+      parent_corpus_id: currentCorpusState.parentCorpusId || null,
+      lineage_type: currentCorpusState.lineageType || 'standalone',
       owner_name: activeUser?.name || targetOrcid || 'Investigador',
       user_orcid: targetOrcid,
       owner_orcid: targetOrcid
@@ -117,7 +130,7 @@ export default function CorpusManagerModal({
     })
       .then(res => {
         setIsSaving(false)
-        setSuccessMsg(`¡Corpus "${corpusName}" guardado exitosamente!`)
+        setSuccessMsg(corpusIdToSave ? `¡Corpus "${corpusName}" actualizado exitosamente!` : `¡Corpus "${corpusName}" guardado exitosamente!`)
         fetchSavedCorpuses()
         setTimeout(() => {
           setActiveTab('list')
@@ -296,115 +309,145 @@ export default function CorpusManagerModal({
                 </button>
               </div>
             ) : (
-              savedCorpuses.map(corpus => (
-                <div
-                  key={corpus.corpus_id}
-                  style={{
-                    padding: '16px',
-                    borderRadius: '12px',
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    border: '1px solid var(--border-color)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '10px',
-                    transition: 'border-color 0.2s ease'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                          {corpus.corpus_name}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: '0.7rem',
-                            padding: '2px 8px',
-                            borderRadius: '12px',
-                            background: corpus.source_mode === 'ids' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(56, 189, 248, 0.15)',
-                            color: corpus.source_mode === 'ids' ? '#c084fc' : 'var(--accent-primary)',
-                            fontWeight: 700
-                          }}
-                        >
-                          {corpus.source_mode === 'ids' ? 'DOIs / IDs' : (corpus.source_mode === 'upload' ? 'Archivo' : 'Filtros')}
-                        </span>
-                        {corpus.lineage_type === 'intellectual_base' && (
-                          <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(129, 140, 248, 0.2)', color: '#818cf8', fontWeight: 700 }}>
-                            📚 Base Intelectual
+              savedCorpuses.map(corpus => {
+                const matchingPkg = packages.find(p => (p.package_name || p.name) === corpus.corpus_name)
+                return (
+                  <div
+                    key={corpus.corpus_id}
+                    style={{
+                      padding: '16px',
+                      borderRadius: '12px',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid var(--border-color)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      transition: 'border-color 0.2s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                            {corpus.corpus_name}
                           </span>
-                        )}
-                        {corpus.lineage_type === 'citing_impact' && (
-                          <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(251, 191, 36, 0.2)', color: '#fbbf24', fontWeight: 700 }}>
-                            ✨ Impacto (Citantes)
+                          <span
+                            style={{
+                              fontSize: '0.7rem',
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                              background: corpus.source_mode === 'ids' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(56, 189, 248, 0.15)',
+                              color: corpus.source_mode === 'ids' ? '#c084fc' : 'var(--accent-primary)',
+                              fontWeight: 700
+                            }}
+                          >
+                            {corpus.source_mode === 'ids' ? 'DOIs / IDs' : (corpus.source_mode === 'upload' ? 'Archivo' : 'Filtros')}
                           </span>
+                          {corpus.lineage_type === 'intellectual_base' && (
+                            <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(129, 140, 248, 0.2)', color: '#818cf8', fontWeight: 700 }}>
+                              📚 Base Intelectual
+                            </span>
+                          )}
+                          {corpus.lineage_type === 'citing_impact' && (
+                            <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(251, 191, 36, 0.2)', color: '#fbbf24', fontWeight: 700 }}>
+                              ✨ Impacto (Citantes)
+                            </span>
+                          )}
+                          {matchingPkg && (
+                            <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', fontWeight: 700, border: '1px solid rgba(16, 185, 129, 0.35)' }}>
+                              ⚡ Métricas Calculadas (48 Tablas)
+                            </span>
+                          )}
+                        </div>
+                        {corpus.description && (
+                          <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', margin: 0 }}>
+                            {corpus.description}
+                          </p>
                         )}
                       </div>
-                      {corpus.description && (
-                        <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', margin: 0 }}>
-                          {corpus.description}
-                        </p>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {matchingPkg && onOpenTables && (
+                          <button
+                            onClick={() => onOpenTables(corpus.corpus_name)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              padding: '7px 12px',
+                              borderRadius: '8px',
+                              background: 'rgba(16, 185, 129, 0.15)',
+                              color: '#34d399',
+                              border: '1px solid rgba(16, 185, 129, 0.4)',
+                              fontWeight: 700,
+                              fontSize: '0.78rem',
+                              cursor: 'pointer'
+                            }}
+                            title="Ver tablas analíticas calculadas de este corpus"
+                          >
+                            <FileSpreadsheet size={14} />
+                            <span>Ver Tablas</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleSelectCorpus(corpus)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '7px 14px',
+                            borderRadius: '8px',
+                            background: 'var(--accent-primary)',
+                            color: '#0f172a',
+                            fontWeight: 800,
+                            fontSize: '0.8rem',
+                            border: 'none',
+                            cursor: 'pointer',
+                            boxShadow: '0 2px 8px rgba(56, 189, 248, 0.3)'
+                          }}
+                        >
+                          <span>Cargar</span>
+                          <ArrowRight size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCorpus(corpus.corpus_id, corpus.corpus_name)}
+                          style={{
+                            padding: '7px 10px',
+                            borderRadius: '8px',
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            color: '#f87171',
+                            border: '1px solid rgba(239, 68, 68, 0.3)',
+                            cursor: 'pointer'
+                          }}
+                          title="Eliminar este corpus"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Metadata Chips */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      <span>📅 Guardado: {corpus.updated_at || corpus.created_at}</span>
+                      {corpus.total_works_estimated > 0 && (
+                        <span>• 📊 ~{corpus.total_works_estimated.toLocaleString()} obras</span>
+                      )}
+                      {corpus.parent_corpus_id && (
+                        <span style={{ color: 'var(--text-dim)' }}>• 🔗 Derivado de: <strong style={{ color: '#fff' }}>{corpus.parent_corpus_id}</strong></span>
+                      )}
+                      {corpus.filters?.country_code && (
+                        <span>• 🇲🇽 País: {corpus.filters.country_code}</span>
+                      )}
+                      {corpus.filters?.fields && (
+                        <span>• 🔬 Campos: {Array.isArray(corpus.filters.fields) ? corpus.filters.fields.join(', ') : corpus.filters.fields}</span>
+                      )}
+                      {corpus.filters?.start_year && (
+                        <span>• ⏳ Años: {corpus.filters.start_year} - {corpus.filters.end_year}</span>
                       )}
                     </div>
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        onClick={() => handleSelectCorpus(corpus)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          padding: '7px 14px',
-                          borderRadius: '8px',
-                          background: 'var(--accent-primary)',
-                          color: '#0f172a',
-                          fontWeight: 800,
-                          fontSize: '0.8rem',
-                          border: 'none',
-                          cursor: 'pointer',
-                          boxShadow: '0 2px 8px rgba(56, 189, 248, 0.3)'
-                        }}
-                      >
-                        <span>Cargar</span>
-                        <ArrowRight size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCorpus(corpus.corpus_id, corpus.corpus_name)}
-                        style={{
-                          padding: '7px 10px',
-                          borderRadius: '8px',
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          color: '#f87171',
-                          border: '1px solid rgba(239, 68, 68, 0.3)',
-                          cursor: 'pointer'
-                        }}
-                        title="Eliminar este corpus"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
                   </div>
-
-                  {/* Metadata Chips */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    <span>📅 Guardado: {corpus.updated_at || corpus.created_at}</span>
-                    {corpus.total_works_estimated > 0 && (
-                      <span>• 📊 ~{corpus.total_works_estimated.toLocaleString()} obras</span>
-                    )}
-                    {corpus.parent_corpus_id && (
-                      <span style={{ color: 'var(--text-dim)' }}>• 🔗 Derivado de: <strong style={{ color: '#fff' }}>{corpus.parent_corpus_id}</strong></span>
-                    )}
-                    {corpus.filters?.country_code && (
-                      <span>• 🇲🇽 País: {corpus.filters.country_code}</span>
-                    )}
-                    {corpus.filters?.fields && (
-                      <span>• 🔬 Campos: {Array.isArray(corpus.filters.fields) ? corpus.filters.fields.join(', ') : corpus.filters.fields}</span>
-                    )}
-                    {corpus.filters?.start_year && (
-                      <span>• ⏳ Años: {corpus.filters.start_year} - {corpus.filters.end_year}</span>
-                    )}
-                  </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
         )}
@@ -412,6 +455,72 @@ export default function CorpusManagerModal({
         {/* TAB 2: SAVE */}
         {activeTab === 'save' && (
           <form onSubmit={handleSaveCurrentCorpus} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Mode Switcher when editing an existing loaded corpus */}
+            {currentCorpusState.corpusId && (
+              <div style={{
+                padding: '12px 16px',
+                borderRadius: '10px',
+                background: 'rgba(56, 189, 248, 0.08)',
+                border: '1px solid rgba(56, 189, 248, 0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '10px'
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--accent-primary)' }}>
+                    📌 Corpus en edición:
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-main)', fontWeight: 600 }}>
+                    {currentCorpusState.corpusName}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setSaveAsNew(false)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      background: !saveAsNew ? 'var(--accent-primary)' : 'rgba(255,255,255,0.06)',
+                      color: !saveAsNew ? '#0f172a' : 'var(--text-dim)'
+                    }}
+                  >
+                    <RefreshCw size={13} />
+                    <span>Sobrescribir / Actualizar</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSaveAsNew(true)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      background: saveAsNew ? 'var(--accent-primary)' : 'rgba(255,255,255,0.06)',
+                      color: saveAsNew ? '#0f172a' : 'var(--text-dim)'
+                    }}
+                  >
+                    <Plus size={13} />
+                    <span>Guardar como Nuevo</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div>
               <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px' }}>
                 Nombre del Corpus *
@@ -491,10 +600,15 @@ export default function CorpusManagerModal({
                   <Loader2 size={18} className="animate-spin" />
                   <span>Guardando...</span>
                 </>
+              ) : (!saveAsNew && currentCorpusState.corpusId) ? (
+                <>
+                  <RefreshCw size={18} />
+                  <span>Actualizar Corpus Guardado</span>
+                </>
               ) : (
                 <>
                   <Save size={18} />
-                  <span>Guardar Corpus en Mi Espacio</span>
+                  <span>Guardar Nuevo Corpus</span>
                 </>
               )}
             </button>

@@ -176,6 +176,9 @@ export default function App() {
   // Health Status
   const [apiOnline, setApiOnline] = useState(true)
 
+  // Loaded Corpus Identity State
+  const [loadedCorpusMetadata, setLoadedCorpusMetadata] = useState(() => loadSessionState('loadedCorpusMetadata', null))
+
   // Save Builder State in Session Storage to preserve across tabs and reloads
   useEffect(() => {
     try {
@@ -203,6 +206,7 @@ export default function App() {
       sessionStorage.setItem('tlachia_hasSearched', JSON.stringify(hasSearched))
       sessionStorage.setItem('tlachia_previewData', JSON.stringify(previewData))
       sessionStorage.setItem('tlachia_packageName', JSON.stringify(packageName))
+      sessionStorage.setItem('tlachia_loadedCorpusMetadata', JSON.stringify(loadedCorpusMetadata))
     } catch (e) {
       console.warn('Could not persist session state:', e)
     }
@@ -210,7 +214,8 @@ export default function App() {
     activeTab, searchMode, query, selectedDomains, selectedFields, selectedSubfields,
     selectedTopics, topicLogic, selectedSources, selectedInstitutions, institutionLogic,
     selectedAuthors, authorLogic, selectedCountries, countryLogic, selectedTypes,
-    startYear, endYear, allYears, oaStatus, idsText, hasSearched, previewData, packageName
+    startYear, endYear, allYears, oaStatus, idsText, hasSearched, previewData, packageName,
+    loadedCorpusMetadata
   ])
 
   // Check API Health
@@ -324,6 +329,7 @@ export default function App() {
     setHasSearched(false)
     setPreviewData({ total: 0, results: [], page: 1, total_pages: 1 })
     setPackageName('Mi_Corpus_TlachIA')
+    setLoadedCorpusMetadata(null)
 
     try {
       Object.keys(sessionStorage).forEach(k => {
@@ -344,7 +350,17 @@ export default function App() {
     handleResetCorpus()
     setPreviewData({ total: corpus.total_works_estimated || 0, results: [], page: 1, total_pages: 1 })
 
-    // 2. Vincular o resetear la vista de tablas del paquete
+    // 2. Registrar la identidad del corpus cargado para permitir actualizaciones en el mismo
+    setLoadedCorpusMetadata({
+      corpus_id: corpus.corpus_id,
+      corpus_name: corpus.corpus_name,
+      description: corpus.description || '',
+      lineage_type: corpus.lineage_type || 'standalone',
+      parent_corpus_id: corpus.parent_corpus_id || null,
+      source_mode: corpus.source_mode || 'filters'
+    })
+
+    // 3. Vincular o resetear la vista de tablas del paquete
     const cName = corpus.corpus_name || 'Mi_Corpus_TlachIA'
     setPackageName(cName)
     const matchingPackage = packages.find(p => (p.package_name || p.name) === cName)
@@ -354,7 +370,7 @@ export default function App() {
       setSelectedPackageForTablePreview(null)
     }
 
-    // 3. Cargar los nuevos parámetros del corpus
+    // 4. Cargar los nuevos parámetros del corpus
     const mode = corpus.source_mode || 'filters'
     setSearchMode(mode)
 
@@ -3299,7 +3315,11 @@ export default function App() {
         onClose={() => setCorpusManagerModalOpen(false)}
         mode={corpusManagerMode}
         currentCorpusState={{
-          corpusName: packageName,
+          corpusId: loadedCorpusMetadata?.corpus_id || null,
+          corpusName: packageName || loadedCorpusMetadata?.corpus_name || '',
+          description: loadedCorpusMetadata?.description || '',
+          lineageType: loadedCorpusMetadata?.lineage_type || 'standalone',
+          parentCorpusId: loadedCorpusMetadata?.parent_corpus_id || null,
           sourceMode: searchMode,
           totalWorksEstimated: previewData.total,
           filters: {
@@ -3320,6 +3340,12 @@ export default function App() {
           idsList: idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
         }}
         onLoadCorpus={handleLoadSavedCorpus}
+        onOpenTables={(pkgName) => {
+          setSelectedPackageForTablePreview(pkgName)
+          setActiveTab('tables')
+          setCorpusManagerModalOpen(false)
+        }}
+        packages={packages}
         user={user}
       />
 

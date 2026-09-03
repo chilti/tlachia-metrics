@@ -47,16 +47,19 @@ const PERIOD_OPTIONS = [
   { id: 'trend', label: 'Tendencia Anual' }
 ]
 
+const getPkgName = (p) => (typeof p === 'string' ? p : (p?.package_name || p?.name || ''))
+
 export default function TablePreviewTab({
   packages = [],
   initialPackage = null,
   onOpenDownloads,
+  onGoToBuilder,
   onSendToCorpus,
   user
 }) {
   const [selectedPackage, setSelectedPackage] = useState(() => {
     if (initialPackage) return initialPackage
-    return packages.length > 0 ? packages[0].name : ''
+    return packages.length > 0 ? getPkgName(packages[0]) : ''
   })
   const [selectedTable, setSelectedTable] = useState('organizations')
   const [selectedPeriod, setSelectedPeriod] = useState('full')
@@ -79,12 +82,12 @@ export default function TablePreviewTab({
     total_pages: 1
   })
 
-  // Sync initialPackage if changed
+  // Sync initialPackage if changed or when packages load
   useEffect(() => {
     if (initialPackage) {
       setSelectedPackage(initialPackage)
-    } else if (!selectedPackage && packages.length > 0) {
-      setSelectedPackage(packages[0].name)
+    } else if ((!selectedPackage || selectedPackage === 'undefined' || selectedPackage === '') && packages.length > 0) {
+      setSelectedPackage(getPkgName(packages[0]))
     }
   }, [initialPackage, packages])
 
@@ -215,11 +218,14 @@ export default function TablePreviewTab({
                 fontWeight: 600
               }}
             >
-              {packages.map(pkg => (
-                <option key={pkg.name} value={pkg.name} style={{ background: '#1e293b' }}>
-                  {pkg.name} ({pkg.total_works?.toLocaleString() || 0} obras)
-                </option>
-              ))}
+              {packages.map(pkg => {
+                const pName = getPkgName(pkg)
+                return (
+                  <option key={pName} value={pName} style={{ background: '#1e293b' }}>
+                    {pName} ({pkg.total_works?.toLocaleString() || 0} obras)
+                  </option>
+                )
+              })}
             </select>
           </div>
 
@@ -361,14 +367,60 @@ export default function TablePreviewTab({
           </div>
 
           {/* Header Action Buttons */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {onGoToBuilder && (
+              <button
+                onClick={onGoToBuilder}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  background: 'rgba(56, 189, 248, 0.1)',
+                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  color: 'var(--accent-primary)',
+                  fontWeight: 600,
+                  fontSize: '0.78rem',
+                  cursor: 'pointer'
+                }}
+                title="Regresar a modificar filtros y recalcular"
+              >
+                <Search size={13} />
+                <span>Refinar Corpus</span>
+              </button>
+            )}
+
+            {onOpenDownloads && (
+              <button
+                onClick={onOpenDownloads}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  background: 'rgba(16, 185, 129, 0.1)',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  color: '#6ee7b7',
+                  fontWeight: 600,
+                  fontSize: '0.78rem',
+                  cursor: 'pointer'
+                }}
+                title="Ir al Centro de Descargas para descargar el paquete .ZIP"
+              >
+                <Download size={13} />
+                <span>Ir a Descargas</span>
+              </button>
+            )}
+
             <button
               onClick={() => handleOpenCitingModal('corpus', '')}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
-                padding: '6px 14px',
+                padding: '6px 12px',
                 borderRadius: '8px',
                 background: 'rgba(251, 191, 36, 0.12)',
                 border: '1px solid rgba(251, 191, 36, 0.4)',
@@ -384,7 +436,7 @@ export default function TablePreviewTab({
             </button>
 
             {/* Pagination Top Indicator */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '4px' }}>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
                 Pág. <strong>{tableData.page}</strong> / <strong>{tableData.total_pages}</strong>
               </span>

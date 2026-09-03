@@ -853,6 +853,7 @@ async def list_exported_packages(request: Request):
 
                     packages.append({
                         'package_name': item.name,
+                        'name': item.name,
                         'zip_filename': f"{item.name}.zip",
                         'zip_size_bytes': stat.st_size,
                         'zip_size_mb': round(stat.st_size / (1024 * 1024), 2),

@@ -593,7 +593,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (activeTab === 'downloads') {
+    if (activeTab === 'downloads' || activeTab === 'tables') {
       fetchPackages()
     }
   }, [activeTab, user])
@@ -772,6 +772,7 @@ export default function App() {
               packages={packages}
               initialPackage={selectedPackageForTablePreview}
               onOpenDownloads={() => setActiveTab('downloads')}
+              onGoToBuilder={() => setActiveTab('builder')}
               onSendToCorpus={handleReceiveCitingCorpus}
               user={user}
             />
@@ -2147,25 +2148,54 @@ export default function App() {
 
             {/* Action Buttons */}
             {activeJob.status === 'completed' ? (
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <a
-                  href={activeJob.result?.download_url}
-                  className="btn btn-success"
-                  style={{ flex: 1, padding: '14px', fontSize: '0.95rem', textDecoration: 'none' }}
-                  download
-                >
-                  <Download size={18} />
-                  Descargar Paquete .ZIP Ahora
-                </a>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <button
-                  className="btn btn-secondary"
+                  className="btn btn-primary"
+                  style={{
+                    padding: '13px 18px',
+                    fontSize: '0.95rem',
+                    fontWeight: 800,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    boxShadow: '0 4px 14px rgba(56, 189, 248, 0.3)'
+                  }}
                   onClick={() => {
                     setJobModalOpen(false)
-                    setActiveTab('downloads')
+                    setSelectedPackageForTablePreview(activeJob.package_name)
+                    setActiveTab('tables')
                   }}
                 >
-                  Ver en Catálogo
+                  <FileSpreadsheet size={18} />
+                  <span>Explorar y Revisar Tablas (16 Entidades)</span>
                 </button>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ flex: 1, padding: '10px 14px', fontSize: '0.85rem' }}
+                    onClick={() => {
+                      setJobModalOpen(false)
+                      setActiveTab('builder')
+                    }}
+                  >
+                    <SlidersHorizontal size={15} />
+                    <span>Refinar en Conformador</span>
+                  </button>
+
+                  <button
+                    className="btn btn-outline"
+                    style={{ flex: 1, padding: '10px 14px', fontSize: '0.85rem' }}
+                    onClick={() => {
+                      setJobModalOpen(false)
+                      setActiveTab('downloads')
+                    }}
+                  >
+                    <FolderArchive size={15} />
+                    <span>Ir a Centro de Descargas</span>
+                  </button>
+                </div>
               </div>
             ) : activeJob.status === 'failed' ? (
               <button className="btn btn-secondary" onClick={() => setJobModalOpen(false)}>

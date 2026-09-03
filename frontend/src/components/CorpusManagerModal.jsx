@@ -53,9 +53,25 @@ export default function CorpusManagerModal({
     }
   }, [isOpen])
 
+  const getActiveUser = () => {
+    if (user?.orcid) return user
+    try {
+      const saved = localStorage.getItem('tlachia_user')
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  }
+
   const fetchSavedCorpuses = () => {
+    const activeUser = getActiveUser()
+    const targetOrcid = activeUser?.orcid || ''
     setLoading(true)
-    axios.get('/api/corpus/saved')
+    setError(null)
+    const url = targetOrcid ? `/api/corpus/list?user_orcid=${encodeURIComponent(targetOrcid)}` : '/api/corpus/list'
+    axios.get(url, {
+      headers: targetOrcid ? { 'X-User-ORCID': targetOrcid, 'X-User-Name': activeUser?.name || '' } : {}
+    })
       .then(res => {
         setSavedCorpuses(res.data.corpuses || [])
         setLoading(false)
@@ -74,6 +90,13 @@ export default function CorpusManagerModal({
       return
     }
 
+    const activeUser = getActiveUser()
+    const targetOrcid = activeUser?.orcid || ''
+    if (!targetOrcid) {
+      setError('Debes iniciar sesión con ORCID para guardar un corpus.')
+      return
+    }
+
     setIsSaving(true)
     setError(null)
 
@@ -84,10 +107,14 @@ export default function CorpusManagerModal({
       filters: currentCorpusState.filters || {},
       ids_list: currentCorpusState.idsList || [],
       total_works_estimated: currentCorpusState.totalWorksEstimated || 0,
-      owner_name: user?.name || user?.orcid || 'Investigador'
+      owner_name: activeUser?.name || targetOrcid || 'Investigador',
+      user_orcid: targetOrcid,
+      owner_orcid: targetOrcid
     }
 
-    axios.post('/api/corpus/save', payload)
+    axios.post('/api/corpus/save', payload, {
+      headers: { 'X-User-ORCID': targetOrcid, 'X-User-Name': activeUser?.name || '' }
+    })
       .then(res => {
         setIsSaving(false)
         setSuccessMsg(`¡Corpus "${corpusName}" guardado exitosamente!`)
@@ -95,7 +122,7 @@ export default function CorpusManagerModal({
         setTimeout(() => {
           setActiveTab('list')
           setSuccessMsg(null)
-        }, 1200)
+        }, 1000)
       })
       .catch(err => {
         console.error('Error saving corpus:', err)
@@ -106,8 +133,12 @@ export default function CorpusManagerModal({
 
   const handleDeleteCorpus = (corpusId, name) => {
     if (!window.confirm(`¿Estás seguro de eliminar el corpus guardado "${name}"?`)) return
+    const activeUser = getActiveUser()
+    const targetOrcid = activeUser?.orcid || ''
 
-    axios.delete(`/api/corpus/saved/${corpusId}/delete`)
+    axios.delete(`/api/corpus/saved/${corpusId}/delete?user_orcid=${encodeURIComponent(targetOrcid)}`, {
+      headers: targetOrcid ? { 'X-User-ORCID': targetOrcid, 'X-User-Name': activeUser?.name || '' } : {}
+    })
       .then(() => {
         setSavedCorpuses(prev => prev.filter(c => c.corpus_id !== corpusId))
       })

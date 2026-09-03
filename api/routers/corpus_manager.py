@@ -19,9 +19,15 @@ from api.db_users import (
 logger = logging.getLogger('corpus_manager')
 
 
-def _get_request_user(request: Request) -> Optional[dict]:
-    """Extrae el ORCID autenticado desde cabeceras o parámetros."""
-    user_orcid = request.headers.get("X-User-ORCID") or request.query_params.get("user_orcid")
+def _get_request_user(request: Request, fallback_orcid: Optional[str] = None) -> Optional[dict]:
+    """Extrae el ORCID autenticado desde cabeceras, parámetros o fallback."""
+    user_orcid = (
+        request.headers.get("X-User-ORCID") or
+        request.headers.get("x-user-orcid") or
+        request.query_params.get("user_orcid") or
+        request.query_params.get("orcid") or
+        fallback_orcid
+    )
     if not user_orcid:
         return None
     user_orcid = user_orcid.strip()
@@ -49,14 +55,15 @@ async def list_saved_corpuses_endpoint(request: Request):
 
 async def save_corpus_endpoint(request: Request):
     """Guarda un nuevo corpus o actualiza uno existente para el usuario autenticado."""
-    user = _get_request_user(request)
-    if not user:
-        return JSONResponse({"error": "No autorizado. Inicia sesión con ORCID."}, status_code=401)
-
     try:
         body = await request.json()
     except Exception:
         body = {}
+
+    fallback_orcid = body.get("user_orcid") or body.get("owner_orcid")
+    user = _get_request_user(request, fallback_orcid=fallback_orcid)
+    if not user:
+        return JSONResponse({"error": "No autorizado. Inicia sesión con ORCID."}, status_code=401)
 
     corpus_name = (body.get("corpus_name") or "").strip()
     if not corpus_name:

@@ -1281,6 +1281,7 @@ routes = [
     Route('/api/corpus/upload-preview', upload_corpus_preview, methods=['POST']),
     Route('/api/corpus/export', export_corpus_endpoint, methods=['POST']),
     Route('/api/corpus/list', list_saved_corpuses_endpoint, methods=['GET']),
+    Route('/api/corpus/saved', list_saved_corpuses_endpoint, methods=['GET']),
     Route('/api/corpus/save', save_corpus_endpoint, methods=['POST']),
     Route('/api/corpus/saved/{corpus_id}', get_saved_corpus_endpoint, methods=['GET']),
     Route('/api/corpus/saved/{corpus_id}/delete', delete_saved_corpus_endpoint, methods=['DELETE', 'POST']),

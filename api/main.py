@@ -62,7 +62,8 @@ from api.routers.corpus_manager import (
 )
 from api.routers.citations import (
     get_citing_works_endpoint,
-    derive_citing_corpus_endpoint
+    derive_citing_corpus_endpoint,
+    get_single_work_citing_endpoint
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
@@ -1287,6 +1288,8 @@ routes = [
     Route('/api/indicators/packages/{package_name}/generate-zip', generate_package_zip_endpoint, methods=['POST']),
     Route('/api/indicators/table-preview/{package_name}', preview_table_endpoint, methods=['GET']),
     Route('/api/citations/citing-works/{package_name}', get_citing_works_endpoint, methods=['GET']),
+    Route('/api/citations/work/{work_id:path}', get_single_work_citing_endpoint, methods=['GET']),
+    Route('/api/citations/work', get_single_work_citing_endpoint, methods=['GET']),
     Route('/api/citations/derive-corpus', derive_citing_corpus_endpoint, methods=['POST']),
     Route('/api/indicators/packages/{package_name}', delete_exported_package, methods=['DELETE']),
     Route('/api/indicators/delete/{package_name}', delete_exported_package, methods=['DELETE', 'POST']),

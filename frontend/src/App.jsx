@@ -41,6 +41,7 @@ import {
 import OrcidLoginModal from './components/OrcidLoginModal'
 import TablePreviewTab from './components/TablePreviewTab'
 import CorpusManagerModal from './components/CorpusManagerModal'
+import CitingWorksModal from './components/CitingWorksModal'
 
 const API_BASE = ''
 
@@ -109,6 +110,10 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(1)
   const [isExportingCorpus, setIsExportingCorpus] = useState(null) // 'csv' | 'json' | null
   const pageSize = 20
+
+  // Individual Work Citing Modal State
+  const [workCitingModalOpen, setWorkCitingModalOpen] = useState(false)
+  const [selectedWorkForCiting, setSelectedWorkForCiting] = useState({ id: '', title: '', citations: 0 })
 
   // Package & Calculation State
   const [packageName, setPackageName] = useState('Mi_Corpus_TlachIA')
@@ -406,6 +411,21 @@ export default function App() {
     } finally {
       setIsExportingCorpus(null)
     }
+  }
+
+  // Open Citing Modal for an Individual Paper
+  const handleOpenWorkCitingModal = (workId, workTitle, citations) => {
+    if (!user) {
+      setLoginModalReason('general')
+      setLoginModalOpen(true)
+      return
+    }
+    setSelectedWorkForCiting({
+      id: workId,
+      title: workTitle || 'Artículo Científico',
+      citations: citations || 0
+    })
+    setWorkCitingModalOpen(true)
   }
 
   // Receive Citing Works and load into Corpus Builder
@@ -2077,7 +2097,34 @@ export default function App() {
                               </td>
 
                               <td style={{ padding: '12px 10px', verticalAlign: 'top', textAlign: 'right', fontWeight: 700, color: '#fbbf24', fontFamily: 'var(--font-mono)' }}>
-                                {r.cited_by_count !== undefined ? r.cited_by_count.toLocaleString() : 0}
+                                {r.cited_by_count > 0 ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleOpenWorkCitingModal(r.id, r.title, r.cited_by_count)
+                                    }}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '5px',
+                                      padding: '3px 9px',
+                                      borderRadius: '12px',
+                                      background: 'rgba(251, 191, 36, 0.12)',
+                                      border: '1px solid rgba(251, 191, 36, 0.4)',
+                                      color: '#fbbf24',
+                                      fontWeight: 800,
+                                      fontSize: '0.8rem',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    title={`Explorar artículos citantes de este paper (${r.cited_by_count.toLocaleString()} citas)`}
+                                  >
+                                    <span>{r.cited_by_count.toLocaleString()}</span>
+                                    <Sparkles size={11} />
+                                  </button>
+                                ) : (
+                                  <span style={{ color: 'var(--text-dim)', paddingRight: '6px' }}>0</span>
+                                )}
                               </td>
 
                               <td style={{ padding: '12px 10px', verticalAlign: 'top', textAlign: 'center' }}>
@@ -2937,6 +2984,16 @@ export default function App() {
           idsList: idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
         }}
         onLoadCorpus={handleLoadSavedCorpus}
+        user={user}
+      />
+
+      {/* Modal de Artículos Citantes por Paper Individual */}
+      <CitingWorksModal
+        isOpen={workCitingModalOpen}
+        onClose={() => setWorkCitingModalOpen(false)}
+        workId={selectedWorkForCiting.id}
+        workTitle={selectedWorkForCiting.title}
+        onSendToCorpus={handleReceiveCitingCorpus}
         user={user}
       />
     </div>

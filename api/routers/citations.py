@@ -388,6 +388,7 @@ async def derive_citing_corpus_endpoint(request: Request):
         body = {}
 
     package_name = body.get('package_name', '').strip()
+    work_id = body.get('work_id', '').strip()
     entity_type = body.get('entity_type', '').strip()
     entity_name = body.get('entity_name', '').strip()
     new_corpus_name = body.get('corpus_name', '').strip()
@@ -397,42 +398,49 @@ async def derive_citing_corpus_endpoint(request: Request):
 
     if not new_corpus_name:
         entity_label = f" ({entity_name})" if entity_name else ""
-        new_corpus_name = f"Citantes de {package_name}{entity_label}"
+        prefix = f"Citantes de {package_name}" if package_name else "Citantes de Artículo"
+        new_corpus_name = f"{prefix}{entity_label}"
 
     # Si no se enviaron los IDs directamente, calcularlos
     if not citing_ids:
-        target_dir = EXPORTS_DIR / package_name
-        json_path = target_dir / f"{package_name}_openalex_works.json"
-        if not json_path.exists():
-            return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
-
-        with open(json_path, 'r', encoding='utf-8') as f:
-            corpus_works = json.load(f)
-
-        cited_work_ids = _extract_entity_work_ids(corpus_works, entity_type, entity_name)
-        if not cited_work_ids:
-            return JSONResponse({'error': 'No se encontraron obras citadas para esta entidad.'}, status_code=400)
-
         client = _get_ch_client()
-        BATCH_SIZE = 2000
-        citing_edges = []
-        for i in range(0, len(cited_work_ids), BATCH_SIZE):
-            batch = cited_work_ids[i:i + BATCH_SIZE]
-            q_str = f"""
-                SELECT DISTINCT citing_work_id
-                FROM rag.work_citations
-                WHERE cited_work_id IN {tuple(batch) if len(batch) > 1 else f"('{batch[0]}')"}
-            """
+        if work_id:
+            norm_id = _normalize_openalex_id(work_id)
+            q_str = f"SELECT DISTINCT citing_work_id FROM rag.work_citations WHERE cited_work_id = '{norm_id}'"
             rows = client.query(q_str).result_rows
-            citing_edges.extend(rows)
+            citing_ids = list(dict.fromkeys([r[0] for r in rows]))
+        elif package_name:
+            target_dir = EXPORTS_DIR / package_name
+            json_path = target_dir / f"{package_name}_openalex_works.json"
+            if not json_path.exists():
+                return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
 
-        citing_ids = list(dict.fromkeys([r[0] for r in citing_edges]))
+            with open(json_path, 'r', encoding='utf-8') as f:
+                corpus_works = json.load(f)
+
+            cited_work_ids = _extract_entity_work_ids(corpus_works, entity_type, entity_name)
+            if not cited_work_ids:
+                return JSONResponse({'error': 'No se encontraron obras citadas para esta entidad.'}, status_code=400)
+
+            BATCH_SIZE = 2000
+            citing_edges = []
+            for i in range(0, len(cited_work_ids), BATCH_SIZE):
+                batch = cited_work_ids[i:i + BATCH_SIZE]
+                q_str = f"""
+                    SELECT DISTINCT citing_work_id
+                    FROM rag.work_citations
+                    WHERE cited_work_id IN {tuple(batch) if len(batch) > 1 else f"('{batch[0]}')"}
+                """
+                rows = client.query(q_str).result_rows
+                citing_edges.extend(rows)
+
+            citing_ids = list(dict.fromkeys([r[0] for r in citing_edges]))
 
     if not citing_ids:
         return JSONResponse({'error': 'No se encontraron artículos citantes para crear el nuevo corpus.'}, status_code=400)
 
     if not description:
-        description = f"Corpus derivado de los artículos citantes de {package_name} ({len(citing_ids):,} obras citantes únicas)."
+        description = f"Corpus derivado de los artículos citantes ({len(citing_ids):,} obras citantes únicas)."
 
     # Persistir en SQLite
     saved = save_user_corpus(
@@ -450,4 +458,136 @@ async def derive_citing_corpus_endpoint(request: Request):
         'success': True,
         'message': f"Nuevo corpus '{new_corpus_name}' creado con éxito con {len(citing_ids):,} artículos citantes.",
         'corpus': saved
+    })
+
+
+async def get_single_work_citing_endpoint(request: Request):
+    """
+    Consulta directa en ClickHouse de los artículos citantes para un paper individual (por su ID OpenAlex).
+    No requiere un paquete exportado previo; responde en < 15ms.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    raw_work_id = request.path_params.get('work_id', '').strip() or request.query_params.get('work_id', '').strip()
+    work_title = request.query_params.get('work_title', '').strip()
+    page = max(1, int(request.query_params.get('page', 1)))
+    limit = max(5, min(200, int(request.query_params.get('limit', 25))))
+    sort_by = request.query_params.get('sort_by', 'cited_by_count').strip()
+    sort_order = request.query_params.get('sort_order', 'desc').strip().lower()
+    search_q = request.query_params.get('q', '').strip()
+
+    if not raw_work_id:
+        return JSONResponse({'error': 'work_id es requerido.'}, status_code=400)
+
+    norm_id = _normalize_openalex_id(raw_work_id)
+    client = _get_ch_client()
+
+    # 1. Consultar aristas de citación en ClickHouse (sin JOINs)
+    q_str = f"""
+        SELECT DISTINCT citing_work_id, citing_publication_year, cited_work_id
+        FROM rag.work_citations
+        WHERE cited_work_id = '{norm_id}'
+    """
+    rows = client.query(q_str).result_rows
+
+    total_citations_count = len(rows)
+    unique_citing_ids = list(dict.fromkeys([r[0] for r in rows]))
+    unique_citing_count = len(unique_citing_ids)
+
+    if not unique_citing_ids:
+        return JSONResponse({
+            'work_id': norm_id,
+            'work_title': work_title or 'Artículo',
+            'package_name': '',
+            'entity_type': 'work',
+            'entity_name': work_title or norm_id,
+            'total_cited_works': 1,
+            'total_citations_count': 0,
+            'unique_citing_works_count': 0,
+            'filtered_count': 0,
+            'page': page,
+            'limit': limit,
+            'total_pages': 1,
+            'citing_works': [],
+            'all_citing_ids': []
+        })
+
+    # 2. Consultar metadatos en rag.works_flat para los citantes únicos
+    META_BATCH_SIZE = 2000
+    citing_metadata = []
+    
+    for i in range(0, len(unique_citing_ids), META_BATCH_SIZE):
+        batch_ids = unique_citing_ids[i:i + META_BATCH_SIZE]
+        q_meta = f"""
+            SELECT 
+                id, doi, title, publication_year, type, 
+                author_names, institution_names, cited_by_count, 
+                fwci, percentile, is_oa, oa_status, 
+                domain_name, field_name, subfield_name
+            FROM rag.works_flat
+            WHERE id IN {tuple(batch_ids) if len(batch_ids) > 1 else f"('{batch_ids[0]}')"}
+        """
+        meta_rows = client.query(q_meta).result_rows
+        for r in meta_rows:
+            citing_metadata.append({
+                'id': r[0],
+                'doi': r[1] or '',
+                'title': r[2] or 'Sin título registrado',
+                'publication_year': r[3],
+                'type': r[4] or 'article',
+                'author_names': list(r[5]) if r[5] else [],
+                'institution_names': list(r[6]) if r[6] else [],
+                'cited_by_count': int(r[7] or 0),
+                'fwci': round(float(r[8] or 0), 2),
+                'percentile': round(float(r[9] or 0), 1),
+                'is_oa': bool(r[10]),
+                'oa_status': r[11] or 'closed',
+                'domain_name': r[12] or '',
+                'field_name': r[13] or '',
+                'subfield_name': r[14] or ''
+            })
+
+    # 3. Filtrar por búsqueda textual si aplica
+    if search_q:
+        sq = search_q.lower()
+        citing_metadata = [
+            w for w in citing_metadata
+            if sq in w['title'].lower()
+            or any(sq in str(a).lower() for a in w['author_names'])
+            or any(sq in str(inst).lower() for inst in w['institution_names'])
+            or sq in w['field_name'].lower()
+            or sq in w['doi'].lower()
+        ]
+
+    # 4. Ordenamiento dinámico
+    reverse_sort = (sort_order == 'desc')
+    if sort_by in ('cited_by_count', 'publication_year', 'fwci', 'percentile'):
+        citing_metadata.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse_sort)
+    elif sort_by in ('title', 'type', 'oa_status'):
+        citing_metadata.sort(key=lambda x: str(x.get(sort_by) or '').lower(), reverse=reverse_sort)
+
+    # 5. Paginación
+    total_matching = len(citing_metadata)
+    total_pages = (total_matching + limit - 1) // limit if limit > 0 else 1
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    page_data = citing_metadata[start_idx:end_idx]
+
+    return JSONResponse({
+        'work_id': norm_id,
+        'work_title': work_title or 'Artículo',
+        'package_name': '',
+        'entity_type': 'work',
+        'entity_name': work_title or norm_id,
+        'total_cited_works': 1,
+        'total_citations_count': total_citations_count,
+        'unique_citing_works_count': unique_citing_count,
+        'filtered_count': total_matching,
+        'page': page,
+        'limit': limit,
+        'total_pages': total_pages,
+        'citing_works': page_data,
+        'all_citing_ids': unique_citing_ids
     })

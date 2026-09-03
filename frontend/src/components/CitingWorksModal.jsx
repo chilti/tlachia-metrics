@@ -25,7 +25,9 @@ import {
 export default function CitingWorksModal({
   isOpen,
   onClose,
-  packageName,
+  packageName = '',
+  workId = '',
+  workTitle = '',
   entityType = '',
   entityName = '',
   onSendToCorpus,
@@ -56,12 +58,12 @@ export default function CitingWorksModal({
   const [saveSuccessMsg, setSaveSuccessMsg] = useState(null)
 
   useEffect(() => {
-    if (isOpen && packageName) {
+    if (isOpen && (packageName || workId)) {
       fetchCitingWorks()
       setSaveSuccessMsg(null)
       setError(null)
     }
-  }, [isOpen, packageName, entityType, entityName, page, pageSize, sortBy, sortOrder, searchQuery])
+  }, [isOpen, packageName, workId, workTitle, entityType, entityName, page, pageSize, sortBy, sortOrder, searchQuery])
 
   const fetchCitingWorks = () => {
     setLoading(true)
@@ -70,6 +72,8 @@ export default function CitingWorksModal({
     const params = {
       entity_type: entityType || '',
       entity_name: entityName || '',
+      work_id: workId || '',
+      work_title: workTitle || '',
       page: page,
       limit: pageSize,
       sort_by: sortBy,
@@ -77,7 +81,14 @@ export default function CitingWorksModal({
       q: searchQuery
     }
 
-    axios.get(`/api/citations/citing-works/${packageName}`, { params })
+    const endpoint = workId
+      ? `/api/citations/work/${encodeURIComponent(workId)}`
+      : `/api/citations/citing-works/${packageName}`
+
+    axios.get(endpoint, {
+      params,
+      headers: user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+    })
       .then(res => {
         setCitingData(res.data)
         setLoading(false)
@@ -151,19 +162,20 @@ export default function CitingWorksModal({
 
     setIsSavingCorpus(true)
     setError(null)
-    const defaultName = `Citantes de ${entityName ? `${entityName} (${packageName})` : packageName}`
-
-    axios.post('/api/citations/derive-corpus', {
-      package_name: packageName,
-      entity_type: entityType,
-      entity_name: entityName,
-      corpus_name: defaultName,
-      citing_ids: citingData.all_citing_ids,
+    const payload = {
+      package_name: packageName || '',
+      work_id: workId || '',
+      entity_type: entityType || (workId ? 'work' : ''),
+      entity_name: workTitle || entityName,
+      citing_ids: citingData.all_citing_ids || [],
+      corpus_name: workTitle ? `Citantes de: ${workTitle.slice(0, 40)}` : `Citantes de ${entityName ? `${entityName} (${packageName})` : packageName}`,
       user_name: user?.name || user?.orcid || 'Investigador'
-    })
+    }
+
+    axios.post('/api/citations/derive-corpus', payload)
       .then(res => {
         setIsSavingCorpus(false)
-        setSaveSuccessMsg(`¡Nuevo corpus "${defaultName}" guardado en "Mis Corpus"!`)
+        setSaveSuccessMsg(`¡Nuevo corpus "${payload.corpus_name}" guardado en "Mis Corpus"!`)
       })
       .catch(err => {
         console.error('Error saving citing corpus:', err)
@@ -232,7 +244,9 @@ export default function CitingWorksModal({
                 </span>
               </div>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', margin: '2px 0 0' }}>
-                {entityName ? (
+                {workId ? (
+                  <>Impacto directo de: <strong style={{ color: 'var(--text-main)' }}>{workTitle || workId}</strong></>
+                ) : entityName ? (
                   <>Impacto directo de: <strong style={{ color: 'var(--text-main)' }}>{entityName}</strong> ({entityType}) en <em>{packageName}</em></>
                 ) : (
                   <>Impacto directo de la totalidad del corpus <em>{packageName}</em></>

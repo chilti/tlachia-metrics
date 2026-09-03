@@ -353,6 +353,11 @@ export default function CorpusManagerModal({
                               ✨ Impacto (Citantes)
                             </span>
                           )}
+                          {(corpus.lineage_type === 'scopus_custom' || corpus.source_mode === 'scopus') && (
+                            <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', fontWeight: 700 }}>
+                              🔬 Scopus Query
+                            </span>
+                          )}
                           {matchingPkg && (
                             <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', fontWeight: 700, border: '1px solid rgba(16, 185, 129, 0.35)' }}>
                               ⚡ Métricas Calculadas (48 Tablas)

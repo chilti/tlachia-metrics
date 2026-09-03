@@ -68,6 +68,12 @@ from api.routers.citations import (
     get_single_work_references_endpoint,
     derive_referenced_corpus_endpoint
 )
+from api.routers.scopus_search import (
+    get_scopus_status_endpoint,
+    get_asjc_catalog_endpoint,
+    estimate_scopus_volume_endpoint,
+    search_and_enrich_scopus_endpoint
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 logger = logging.getLogger('tlachia_api')
@@ -1302,6 +1308,10 @@ routes = [
     Route('/api/indicators/packages/{package_name}', delete_exported_package, methods=['DELETE']),
     Route('/api/indicators/delete/{package_name}', delete_exported_package, methods=['DELETE', 'POST']),
     Route('/api/indicators/download/{package_name}', download_indicators_zip, methods=['GET']),
+    Route('/api/scopus/status', get_scopus_status_endpoint, methods=['GET']),
+    Route('/api/scopus/asjc-catalog', get_asjc_catalog_endpoint, methods=['GET']),
+    Route('/api/scopus/estimate', estimate_scopus_volume_endpoint, methods=['POST']),
+    Route('/api/scopus/search-and-enrich', search_and_enrich_scopus_endpoint, methods=['POST']),
 ]
 
 if FRONTEND_DIST.exists():

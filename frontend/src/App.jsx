@@ -43,6 +43,7 @@ import OrcidLoginModal from './components/OrcidLoginModal'
 import TablePreviewTab from './components/TablePreviewTab'
 import CorpusManagerModal from './components/CorpusManagerModal'
 import CitingWorksModal from './components/CitingWorksModal'
+import ScopusControls from './components/ScopusControls'
 
 const API_BASE = ''
 
@@ -58,6 +59,13 @@ const loadSessionState = (key, fallback) => {
 export default function App() {
   const [activeTab, setActiveTab] = useState(() => loadSessionState('activeTab', 'builder')) // 'builder' | 'tables' | 'downloads'
   const [searchMode, setSearchMode] = useState(() => loadSessionState('searchMode', 'filters')) // 'filters' | 'ids' | 'upload'
+
+  // Scopus Search API State
+  const [scopusAvailable, setScopusAvailable] = useState(false)
+  const [isScopusMode, setIsScopusMode] = useState(() => loadSessionState('isScopusMode', false))
+  const [scopusQuery, setScopusQuery] = useState(() => loadSessionState('scopusQuery', ''))
+  const [isScopusSearching, setIsScopusSearching] = useState(false)
+  const [scopusCoverageStats, setScopusCoverageStats] = useState(() => loadSessionState('scopusCoverageStats', null))
 
   // User & ORCID Authentication State
   const [user, setUser] = useState(() => {
@@ -141,6 +149,9 @@ export default function App() {
 
   // Determine if there is at least one active filter or search query
   const hasAnyFilter = useMemo(() => {
+    if (isScopusMode) {
+      return scopusQuery.trim().length > 0
+    }
     if (searchMode === 'ids') {
       return idsText.trim().length > 0
     }
@@ -162,7 +173,7 @@ export default function App() {
       oaStatus !== 'all'
     )
   }, [
-    searchMode, idsText, uploadedFile, uploadResult, query,
+    isScopusMode, scopusQuery, searchMode, idsText, uploadedFile, uploadResult, query,
     selectedDomains, selectedFields, selectedSubfields, selectedTopics,
     selectedSources, selectedInstitutions, selectedAuthors, selectedCountries,
     selectedTypes, allYears, oaStatus
@@ -207,6 +218,9 @@ export default function App() {
       sessionStorage.setItem('tlachia_previewData', JSON.stringify(previewData))
       sessionStorage.setItem('tlachia_packageName', JSON.stringify(packageName))
       sessionStorage.setItem('tlachia_loadedCorpusMetadata', JSON.stringify(loadedCorpusMetadata))
+      sessionStorage.setItem('tlachia_isScopusMode', JSON.stringify(isScopusMode))
+      sessionStorage.setItem('tlachia_scopusQuery', JSON.stringify(scopusQuery))
+      sessionStorage.setItem('tlachia_scopusCoverageStats', JSON.stringify(scopusCoverageStats))
     } catch (e) {
       console.warn('Could not persist session state:', e)
     }
@@ -215,14 +229,23 @@ export default function App() {
     selectedTopics, topicLogic, selectedSources, selectedInstitutions, institutionLogic,
     selectedAuthors, authorLogic, selectedCountries, countryLogic, selectedTypes,
     startYear, endYear, allYears, oaStatus, idsText, hasSearched, previewData, packageName,
-    loadedCorpusMetadata
+    loadedCorpusMetadata, isScopusMode, scopusQuery, scopusCoverageStats
   ])
 
-  // Check API Health
+  // Check API Health & Scopus Availability
   useEffect(() => {
     axios.get('/api/health')
       .then(() => setApiOnline(true))
       .catch(() => setApiOnline(false))
+
+    axios.get('/api/scopus/status')
+      .then(res => {
+        setScopusAvailable(Boolean(res.data.available))
+      })
+      .catch(err => {
+        console.warn('Could not verify Scopus status:', err)
+        setScopusAvailable(false)
+      })
   }, [])
 
   // Handle ORCID OAuth callback (?code=...) on page load
@@ -330,6 +353,9 @@ export default function App() {
     setPreviewData({ total: 0, results: [], page: 1, total_pages: 1 })
     setPackageName('Mi_Corpus_TlachIA')
     setLoadedCorpusMetadata(null)
+    setIsScopusMode(false)
+    setScopusQuery('')
+    setScopusCoverageStats(null)
 
     try {
       Object.keys(sessionStorage).forEach(k => {
@@ -339,6 +365,61 @@ export default function App() {
       })
     } catch (e) {
       console.warn('Could not clear sessionStorage:', e)
+    }
+  }
+
+  // Execute Search in Scopus API and Cross-Reference with OpenAlex ClickHouse
+  const handleExecuteScopusSearch = async () => {
+    if (!user) {
+      setLoginModalReason('general')
+      setLoginModalOpen(true)
+      return
+    }
+    if (!scopusQuery.trim()) {
+      alert('Por favor especifica o genera una consulta de Scopus.')
+      return
+    }
+
+    setIsScopusSearching(true)
+    setPreviewLoading(true)
+    setHasSearched(true)
+    try {
+      const res = await axios.post('/api/scopus/search-and-enrich', {
+        query: scopusQuery.trim(),
+        start_year: allYears ? undefined : startYear,
+        end_year: allYears ? undefined : endYear,
+        max_results: 5000
+      })
+
+      const data = res.data
+      setScopusCoverageStats({
+        scopus_total_found: data.scopus_total_found || 0,
+        scopus_docs_fetched: data.scopus_docs_fetched || 0,
+        matched_in_openalex: data.matched_in_openalex || 0,
+        coverage_pct: data.coverage_pct || 0.0,
+        unmatched_dois_count: data.unmatched_dois_count || 0
+      })
+
+      setPreviewData({
+        total: data.matched_in_openalex || 0,
+        results: data.preview_results || [],
+        page: 1,
+        total_pages: Math.ceil((data.matched_in_openalex || 0) / 20) || 1
+      })
+
+      if (data.work_ids?.length > 0) {
+        setIdsText(data.work_ids.join('\n'))
+      }
+
+      if (packageName === 'Mi_Corpus_TlachIA') {
+        setPackageName('Corpus_Scopus_Custom')
+      }
+    } catch (err) {
+      console.error('Error executing Scopus search:', err)
+      alert(err.response?.data?.error || 'Error al ejecutar la consulta en la API de Scopus.')
+    } finally {
+      setIsScopusSearching(false)
+      setPreviewLoading(false)
     }
   }
 
@@ -396,8 +477,15 @@ export default function App() {
             setPreviewLoading(false)
           })
       }
-    } else if (mode === 'filters') {
+    } else if (mode === 'filters' || mode === 'scopus') {
       const f = corpus.filters || {}
+      if (mode === 'scopus' || f.scopus_query) {
+        setIsScopusMode(true)
+        setScopusQuery(f.scopus_query || '')
+      } else {
+        setIsScopusMode(false)
+        setScopusQuery('')
+      }
       setQuery(f.query || '')
       setStartYear(f.start_year || 2015)
       setEndYear(f.end_year || 2026)
@@ -1796,58 +1884,126 @@ export default function App() {
                 </div>
               )}
 
-              {/* Search Hero */}
-              {searchMode === 'filters' && (
-                <div className="glass-panel search-hero">
-                  <div className="search-input-wrapper">
-                    <Search className="search-icon" size={20} />
-                    <input
-                      type="text"
-                      className="search-input"
-                      style={{ paddingRight: '120px', cursor: user ? 'text' : 'pointer' }}
-                      placeholder={user ? "Buscar por título, palabras clave, conceptos o tema..." : "🔒 Inicia sesión con ORCID para buscar en OpenAlex..."}
-                      value={query}
-                      disabled={!user}
-                      onClick={() => {
-                        if (!user) {
-                          setLoginModalReason('general')
-                          setLoginModalOpen(true)
-                        }
-                      }}
-                      onChange={(e) => setQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
-                    />
-                    {query && (
-                      <button
-                        onClick={() => setQuery('')}
-                        style={{ position: 'absolute', right: '115px', background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
+                {/* Search Hero & Scopus API Switcher */}
+                {searchMode === 'filters' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* Scopus Engine Checkbox Toggle */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <label
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '6px 14px',
+                          borderRadius: '10px',
+                          background: isScopusMode ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                          border: isScopusMode ? '1.5px solid #3b82f6' : '1px solid var(--border-color)',
+                          cursor: scopusAvailable ? 'pointer' : 'not-allowed',
+                          opacity: scopusAvailable ? 1 : 0.6,
+                          userSelect: 'none',
+                          transition: 'all 0.2s ease'
+                        }}
+                        title={!scopusAvailable ? 'Se requiere configurar SCOPUS_API_KEY en .env para activar el motor Scopus' : 'Conmutar entre búsqueda local en OpenAlex o búsqueda en Scopus API'}
                       >
-                        <X size={18} />
-                      </button>
-                    )}
-                    <button
-                      className="btn btn-primary"
-                      style={{
-                        position: 'absolute',
-                        right: '8px',
-                        top: '8px',
-                        bottom: '8px',
-                        padding: '0 20px',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: '0.85rem',
-                        opacity: (!hasAnyFilter || previewLoading) ? 0.5 : 1,
-                        cursor: (!hasAnyFilter || previewLoading) ? 'not-allowed' : 'pointer'
-                      }}
-                      onClick={handleSearch}
-                      disabled={previewLoading || !hasAnyFilter}
-                      title={!hasAnyFilter ? "Ingresa una palabra clave, selecciona una entidad o aplica un filtro para buscar" : "Consultar y dimensionar corpus"}
-                    >
-                      {previewLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-                      Buscar
-                    </button>
-                  </div>
+                        <input
+                          type="checkbox"
+                          checked={isScopusMode}
+                          disabled={!scopusAvailable}
+                          onChange={(e) => {
+                            if (!user) {
+                              setLoginModalReason('filters')
+                              setLoginModalOpen(true)
+                              return
+                            }
+                            setIsScopusMode(e.target.checked)
+                          }}
+                          style={{ cursor: scopusAvailable ? 'pointer' : 'not-allowed', accentColor: '#3b82f6' }}
+                        />
+                        <span style={{ fontSize: '0.82rem', fontWeight: 800, color: isScopusMode ? '#93c5fd' : 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>🔬 Buscar en Scopus API (Elsevier)</span>
+                          {!scopusAvailable && (
+                            <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', fontWeight: 600 }}>
+                              Sin API Key en .env
+                            </span>
+                          )}
+                        </span>
+                      </label>
 
-                  {/* Active Chips Bar */}
+                      {isScopusMode && (
+                        <span style={{ fontSize: '0.75rem', color: '#60a5fa', background: 'rgba(59, 130, 246, 0.1)', padding: '4px 10px', borderRadius: '8px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                          ⚡ Búsqueda Remota en Scopus + Cruce Local OpenAlex
+                        </span>
+                      )}
+                    </div>
+
+                    {isScopusMode ? (
+                      <ScopusControls
+                        scopusQuery={scopusQuery}
+                        setScopusQuery={setScopusQuery}
+                        startYear={startYear}
+                        setStartYear={setStartYear}
+                        endYear={endYear}
+                        setEndYear={setEndYear}
+                        allYears={allYears}
+                        setAllYears={setAllYears}
+                        onExecuteScopusSearch={handleExecuteScopusSearch}
+                        isSearching={isScopusSearching}
+                        coverageStats={scopusCoverageStats}
+                        user={user}
+                      />
+                    ) : (
+                      <div className="glass-panel search-hero">
+                        <div className="search-input-wrapper">
+                          <Search className="search-icon" size={20} />
+                          <input
+                            type="text"
+                            className="search-input"
+                            style={{ paddingRight: '120px', cursor: user ? 'text' : 'pointer' }}
+                            placeholder={user ? "Buscar por título, palabras clave, conceptos o tema..." : "🔒 Inicia sesión con ORCID para buscar en OpenAlex..."}
+                            value={query}
+                            disabled={!user}
+                            onClick={() => {
+                              if (!user) {
+                                setLoginModalReason('general')
+                                setLoginModalOpen(true)
+                              }
+                            }}
+                            onChange={(e) => setQuery(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
+                          />
+                          {query && (
+                            <button
+                              onClick={() => setQuery('')}
+                              style={{ position: 'absolute', right: '115px', background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
+                            >
+                              <X size={18} />
+                            </button>
+                          )}
+                          <button
+                            className="btn btn-primary"
+                            style={{
+                              position: 'absolute',
+                              right: '8px',
+                              top: '8px',
+                              bottom: '8px',
+                              padding: '0 20px',
+                              borderRadius: 'var(--radius-md)',
+                              fontSize: '0.85rem',
+                              opacity: (!hasAnyFilter || previewLoading) ? 0.5 : 1,
+                              cursor: (!hasAnyFilter || previewLoading) ? 'not-allowed' : 'pointer'
+                            }}
+                            onClick={handleSearch}
+                            disabled={previewLoading || !hasAnyFilter}
+                            title={!hasAnyFilter ? "Ingresa una palabra clave, selecciona una entidad o aplica un filtro para buscar" : "Consultar y dimensionar corpus"}
+                          >
+                            {previewLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                            Buscar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Active Chips Bar */}
                   {(selectedTopics.length > 0 || selectedSources.length > 0 || selectedInstitutions.length > 0 || selectedAuthors.length > 0 || selectedCountries.length > 0 || selectedTypes.length > 0 || oaStatus !== 'all') && (
                     <div className="chips-container">
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', alignSelf: 'center' }}>Filtros activos:</span>
@@ -3318,12 +3474,13 @@ export default function App() {
           corpusId: loadedCorpusMetadata?.corpus_id || null,
           corpusName: packageName || loadedCorpusMetadata?.corpus_name || '',
           description: loadedCorpusMetadata?.description || '',
-          lineageType: loadedCorpusMetadata?.lineage_type || 'standalone',
+          lineageType: isScopusMode ? 'scopus_custom' : (loadedCorpusMetadata?.lineage_type || 'standalone'),
           parentCorpusId: loadedCorpusMetadata?.parent_corpus_id || null,
-          sourceMode: searchMode,
+          sourceMode: isScopusMode ? 'scopus' : searchMode,
           totalWorksEstimated: previewData.total,
           filters: {
             query,
+            scopus_query: isScopusMode ? scopusQuery : undefined,
             domain_names: selectedDomains.map(d => d.domain_name || d.name),
             field_names: selectedFields.map(f => f.field_name || f.name),
             subfield_names: selectedSubfields.map(sf => sf.subfield_name || sf.name),

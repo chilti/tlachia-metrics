@@ -416,7 +416,8 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error executing Scopus search:', err)
-      alert(err.response?.data?.error || 'Error al ejecutar la consulta en la API de Scopus.')
+      const errorDetail = err.response?.data?.error || err.message || 'Error de conexión con Scopus API.'
+      alert(`Error en consulta Scopus: ${errorDetail}`)
     } finally {
       setIsScopusSearching(false)
       setPreviewLoading(false)

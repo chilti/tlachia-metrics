@@ -171,34 +171,41 @@ def _download_scopus_query_entries(
             (2016, 2026)
         ]
 
-    def fetch_bracket(bracket: Tuple[int, int]) -> List[dict]:
-        b_start, b_end = bracket
-        b_query = f"({raw_query}) AND PUBYEAR > {b_start - 1} AND PUBYEAR < {b_end + 1}"
-        b_url = f"https://api.elsevier.com/content/search/scopus?query={urllib.parse.quote(b_query)}&count={page_size}&start=0"
-        b_entries, b_tot = _fetch_scopus_page_and_total(session, b_url, headers)
-        if not b_entries:
-            return []
+    # Fase 1: Probar cada bracket en paralelo para obtener conteo y primera página
+    def probe_bracket(b: Tuple[int, int]) -> Tuple[str, int, List[dict]]:
+        b_query = f"({raw_query}) AND PUBYEAR > {b[0] - 1} AND PUBYEAR < {b[1] + 1}"
+        url = f"https://api.elsevier.com/content/search/scopus?query={urllib.parse.quote(b_query)}&count={page_size}&start=0"
+        entries, tot = _fetch_scopus_page_and_total(session, url, headers)
+        return b_query, tot, entries
 
-        entries_collector = list(b_entries)
-        if b_tot > page_size:
-            b_starts = list(range(page_size, min(b_tot, 5000), page_size))
-            b_urls = [f"https://api.elsevier.com/content/search/scopus?query={urllib.parse.quote(b_query)}&count={page_size}&start={s}" for s in b_starts]
-            for u in b_urls:
-                p, _ = _fetch_scopus_page_and_total(session, u, headers)
-                if p:
-                    entries_collector.extend(p)
-        return entries_collector
+    all_initial_entries = []
+    all_remaining_urls = []
 
-    all_partitioned_entries = []
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        for bracket_res in executor.map(fetch_bracket, year_brackets):
-            if bracket_res:
-                all_partitioned_entries.extend(bracket_res)
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        probes = list(ex.map(probe_bracket, year_brackets))
+
+    for b_query, tot, entries in probes:
+        all_initial_entries.extend(entries)
+        if tot > page_size:
+            for s in range(page_size, min(tot, 5000), page_size):
+                all_remaining_urls.append(
+                    f"https://api.elsevier.com/content/search/scopus?query={urllib.parse.quote(b_query)}&count={page_size}&start={s}"
+                )
+
+    # Fase 2: Descargar todas las páginas restantes en paralelo con pool de 10 trabajadores
+    remaining_entries = []
+    if all_remaining_urls:
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            for batch, _ in ex.map(lambda u: _fetch_scopus_page_and_total(session, u, headers), all_remaining_urls):
+                if batch:
+                    remaining_entries.extend(batch)
+
+    all_downloaded = all_initial_entries + remaining_entries
 
     # Deduplicar por identificadores
     seen_ids = set()
     deduped_entries = []
-    for entry in all_partitioned_entries:
+    for entry in all_downloaded:
         uid = entry.get("eid") or entry.get("prism:doi") or entry.get("dc:identifier") or entry.get("dc:title")
         if uid and uid not in seen_ids:
             seen_ids.add(uid)

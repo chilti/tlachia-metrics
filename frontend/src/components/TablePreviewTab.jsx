@@ -51,6 +51,8 @@ const getPkgName = (p) => (typeof p === 'string' ? p : (p?.package_name || p?.na
 export default function TablePreviewTab({
   packages = [],
   initialPackage = null,
+  activeJob = null,
+  onOpenJobModal = null,
   onOpenDownloads,
   onGoToBuilder,
   onSendToCorpus,
@@ -89,6 +91,13 @@ export default function TablePreviewTab({
       setSelectedPackage(getPkgName(packages[0]))
     }
   }, [initialPackage, packages])
+
+  // Auto-switch to newly completed package
+  useEffect(() => {
+    if (activeJob && activeJob.status === 'completed' && activeJob.package_name) {
+      setSelectedPackage(activeJob.package_name)
+    }
+  }, [activeJob?.status, activeJob?.package_name])
 
   // Fetch Table Data
   useEffect(() => {
@@ -176,6 +185,55 @@ export default function TablePreviewTab({
   }
 
   if (packages.length === 0) {
+    if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) {
+      return (
+        <div className="card-panel" style={{ padding: '50px 24px', textAlign: 'center', maxWidth: '580px', margin: '0 auto' }}>
+          <div style={{
+            width: '56px',
+            height: '56px',
+            borderRadius: '50%',
+            background: 'rgba(56, 189, 248, 0.15)',
+            border: '1px solid rgba(56, 189, 248, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 16px'
+          }}>
+            <Loader2 size={30} color="var(--accent-primary)" className="animate-spin" />
+          </div>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', marginBottom: '6px' }}>
+            Cálculo de Indicadores en Curso
+          </h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '20px' }}>
+            Procesando el paquete <strong>{activeJob.package_name}</strong>. En unos momentos las tablas estarán listas para su exploración.
+          </p>
+
+          <div style={{ background: 'rgba(0, 0, 0, 0.25)', padding: '14px 18px', borderRadius: '10px', marginBottom: '20px', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '8px' }}>
+              <span style={{ color: 'var(--text-dim)' }}>{activeJob.stage_label}</span>
+              <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)' }}>
+                {activeJob.progress}%
+              </span>
+            </div>
+            <div className="progress-bar-container">
+              <div className="progress-bar-fill" style={{ width: `${activeJob.progress}%` }} />
+            </div>
+          </div>
+
+          {onOpenJobModal && (
+            <button
+              className="btn btn-outline"
+              style={{ fontSize: '0.85rem', margin: '0 auto' }}
+              onClick={onOpenJobModal}
+            >
+              <Eye size={15} />
+              <span>Ver Diálogo Completo</span>
+            </button>
+          )}
+        </div>
+      )
+    }
+
     return (
       <div className="card-panel" style={{ padding: '60px 20px', textAlign: 'center' }}>
         <FolderArchive size={48} color="var(--accent-primary)" style={{ margin: '0 auto 16px', opacity: 0.6 }} />
@@ -189,8 +247,66 @@ export default function TablePreviewTab({
     )
   }
 
+  const isJobRunning = activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Live Calculation Banner */}
+      {isJobRunning && (
+        <div style={{
+          background: 'linear-gradient(90deg, rgba(56, 189, 248, 0.12) 0%, rgba(99, 102, 241, 0.12) 100%)',
+          border: '1px solid rgba(56, 189, 248, 0.35)',
+          borderRadius: '12px',
+          padding: '14px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '16px',
+          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '50%',
+              background: 'rgba(56, 189, 248, 0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Loader2 size={20} color="var(--accent-primary)" className="animate-spin" />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Cálculo en curso: <strong>{activeJob.package_name}</strong></span>
+                <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.2)', color: 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>
+                  {activeJob.progress}%
+                </span>
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: '2px' }}>
+                {activeJob.stage_label}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '1 1 220px', maxWidth: '340px' }}>
+            <div className="progress-bar-container" style={{ flex: 1 }}>
+              <div className="progress-bar-fill" style={{ width: `${activeJob.progress}%` }} />
+            </div>
+            {onOpenJobModal && (
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '6px 12px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+                onClick={onOpenJobModal}
+              >
+                <Eye size={13} />
+                <span>Ver Diálogo</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {/* Top Controls Bar */}
       <div className="card-panel" style={{ padding: '18px 24px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', alignItems: 'center' }}>

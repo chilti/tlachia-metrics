@@ -114,6 +114,11 @@ export default function App() {
   const [activeJob, setActiveJob] = useState(null)
   const [jobModalOpen, setJobModalOpen] = useState(false)
 
+  // Duplicate Corpus Validation State
+  const [lastCalculatedSignature, setLastCalculatedSignature] = useState(null)
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false)
+  const [duplicatePackageName, setDuplicatePackageName] = useState('')
+
   // Downloads Hub State
   const [packages, setPackages] = useState([])
   const [loadingPackages, setLoadingPackages] = useState(false)
@@ -473,25 +478,16 @@ export default function App() {
     setEntitySearchQuery('')
   }
 
-  // Launch Metrics Computation Job
-  const handleLaunchCalculation = async () => {
+  // Helper to build canonical payload and deterministic signature
+  const buildCorpusPayload = () => {
     let payload = {
-      package_name: packageName,
+      package_name: packageName.trim().replace(/\s+/g, '_') || `Corpus_${Date.now()}`,
       source_mode: searchMode
     }
 
-    // Verificar que el usuario esté autenticado para procesar
-    if (!user?.orcid) {
-      setLoginModalReason('job_creation')
-      setLoginModalOpen(true)
-      return
-    }
-    payload.user_orcid = user.orcid
-    payload.user_name = user.name
-
     if (searchMode === 'filters') {
       payload.filters = {
-        query,
+        query: query.trim(),
         domain_names: selectedDomains.map(d => d.domain_name || d.name),
         domain_ids: selectedDomains.map(d => d.id),
         field_names: selectedFields.map(f => f.field_name || f.name),
@@ -518,15 +514,82 @@ export default function App() {
     } else if (searchMode === 'upload') {
       if (!uploadResult?.file_path) {
         alert('Por favor sube un archivo primero.')
-        return
+        return null
       }
       payload.file_path = uploadResult.file_path
+    }
+
+    // Canonical signature for change detection
+    const canonical = {
+      package_name: payload.package_name,
+      source_mode: payload.source_mode,
+      filters: payload.filters ? {
+        query: payload.filters.query || '',
+        domain_ids: [...(payload.filters.domain_ids || [])].sort(),
+        field_ids: [...(payload.filters.field_ids || [])].sort(),
+        subfield_ids: [...(payload.filters.subfield_ids || [])].sort(),
+        topic_ids: [...(payload.filters.topic_ids || [])].sort(),
+        topic_logic: payload.filters.topic_logic,
+        source_ids: [...(payload.filters.source_ids || [])].sort(),
+        institution_ids: [...(payload.filters.institution_ids || [])].sort(),
+        institution_logic: payload.filters.institution_logic,
+        author_ids: [...(payload.filters.author_ids || [])].sort(),
+        author_logic: payload.filters.author_logic,
+        country_codes: [...(payload.filters.country_codes || [])].sort(),
+        country_logic: payload.filters.country_logic,
+        work_types: [...(payload.filters.work_types || [])].sort(),
+        start_year: payload.filters.start_year,
+        end_year: payload.filters.end_year,
+        oa_status: payload.filters.oa_status || 'all'
+      } : null,
+      ids: payload.ids ? [...payload.ids].sort() : null,
+      file_path: payload.file_path || null
+    }
+
+    return { payload, signature: JSON.stringify(canonical) }
+  }
+
+  // Launch Metrics Computation Job
+  const handleLaunchCalculation = async (force = false) => {
+    // Verificar que el usuario esté autenticado para procesar
+    if (!user?.orcid) {
+      setLoginModalReason('job_creation')
+      setLoginModalOpen(true)
+      return
+    }
+
+    const built = buildCorpusPayload()
+    if (!built) return
+    const { payload, signature } = built
+
+    payload.user_orcid = user.orcid
+    payload.user_name = user.name || user.orcid
+
+    // Validar si ya hay un trabajo en ejecución
+    if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) {
+      if (activeJob.package_name === payload.package_name || lastCalculatedSignature === signature) {
+        setJobModalOpen(true)
+        return
+      } else {
+        alert(`Ya hay un cálculo en curso para el paquete "${activeJob.package_name}". Espera a que termine antes de lanzar otro.`)
+        setJobModalOpen(true)
+        return
+      }
+    }
+
+    // Validar si el corpus NO ha cambiado respecto al último cálculo
+    if (!force && lastCalculatedSignature === signature) {
+      setDuplicatePackageName(payload.package_name)
+      setDuplicateModalOpen(true)
+      return
     }
 
     try {
       const res = await axios.post('/api/jobs/create', payload, {
         headers: user?.orcid ? { 'X-User-ORCID': user.orcid, 'X-User-Name': user.name || '' } : {}
       })
+      setLastCalculatedSignature(signature)
+      setDuplicateModalOpen(false)
       setActiveJob({
         job_id: res.data.job_id,
         package_name: res.data.package_name,
@@ -771,6 +834,8 @@ export default function App() {
             <TablePreviewTab
               packages={packages}
               initialPackage={selectedPackageForTablePreview}
+              activeJob={activeJob}
+              onOpenJobModal={() => setJobModalOpen(true)}
               onOpenDownloads={() => setActiveTab('downloads')}
               onGoToBuilder={() => setActiveTab('builder')}
               onSendToCorpus={handleReceiveCitingCorpus}
@@ -1588,7 +1653,7 @@ export default function App() {
                     }}
                   >
                     <Sparkles size={18} />
-                    Calcular Métricas (48 Tablas)
+                    Calcular Métricas (45 Tablas)
                   </button>
                 </div>
               </div>
@@ -2210,6 +2275,79 @@ export default function App() {
                 Minimizar (Continuará en segundo plano)
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Corpus Notice & Shortcut Modal */}
+      {duplicateModalOpen && (
+        <div className="modal-backdrop" onClick={() => setDuplicateModalOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px', textAlign: 'center', padding: '32px 28px' }}>
+            <div style={{
+              width: '56px',
+              height: '56px',
+              borderRadius: '50%',
+              background: 'rgba(56, 189, 248, 0.15)',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px',
+              color: 'var(--accent-primary)'
+            }}>
+              <Sparkles size={28} />
+            </div>
+
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
+              El Corpus No Ha Cambiado
+            </h3>
+
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '22px' }}>
+              Los filtros, temporalidad y parámetros son idénticos a los del paquete recién procesado: <strong>{duplicatePackageName}</strong>. No es necesario volver a calcular para ver los resultados.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                className="btn btn-primary"
+                style={{
+                  padding: '13px 18px',
+                  fontSize: '0.92rem',
+                  fontWeight: 800,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 14px rgba(56, 189, 248, 0.3)'
+                }}
+                onClick={() => {
+                  setDuplicateModalOpen(false)
+                  setSelectedPackageForTablePreview(duplicatePackageName)
+                  setActiveTab('tables')
+                }}
+              >
+                <FileSpreadsheet size={18} />
+                <span>Explorar Tablas Calculadas</span>
+              </button>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ flex: 1, padding: '10px 14px', fontSize: '0.85rem' }}
+                  onClick={() => handleLaunchCalculation(true)}
+                >
+                  <RefreshCw size={14} />
+                  <span>Forzar Recálculo</span>
+                </button>
+
+                <button
+                  className="btn btn-outline"
+                  style={{ flex: 1, padding: '10px 14px', fontSize: '0.85rem' }}
+                  onClick={() => setDuplicateModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -61,8 +61,7 @@ export default function TablePreviewTab({
   user
 }) {
   const [selectedPackage, setSelectedPackage] = useState(() => {
-    if (initialPackage) return initialPackage
-    return packages.length > 0 ? getPkgName(packages[0]) : ''
+    return initialPackage || ''
   })
   const [selectedTable, setSelectedTable] = useState('organizations')
   const [selectedPeriod, setSelectedPeriod] = useState('full')
@@ -88,14 +87,20 @@ export default function TablePreviewTab({
     total_pages: 1
   })
 
-  // Sync initialPackage if changed or when packages load
+  // Sync initialPackage when passed from parent (e.g. clicking "Explorar Tablas" from a specific card)
   useEffect(() => {
     if (initialPackage) {
       setSelectedPackage(initialPackage)
-    } else if ((!selectedPackage || selectedPackage === 'undefined' || selectedPackage === '') && packages.length > 0) {
-      setSelectedPackage(getPkgName(packages[0]))
     }
-  }, [initialPackage, packages])
+  }, [initialPackage])
+
+  // Reset when user logs out
+  useEffect(() => {
+    if (!user) {
+      setSelectedPackage('')
+      setTableData({ columns: [], data: [], total_rows: 0, total_pages: 1 })
+    }
+  }, [user])
 
   // Auto-switch to newly completed package
   useEffect(() => {
@@ -106,7 +111,12 @@ export default function TablePreviewTab({
 
   // Fetch Table Data
   useEffect(() => {
-    if (!selectedPackage) return
+    if (!selectedPackage) {
+      setTableData({ columns: [], data: [], total_rows: 0, total_pages: 1 })
+      setLoading(false)
+      setError(null)
+      return
+    }
 
     setLoading(true)
     setError(null)
@@ -362,16 +372,19 @@ export default function TablePreviewTab({
                 padding: '10px 14px',
                 borderRadius: '10px',
                 background: 'rgba(0, 0, 0, 0.25)',
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-main)',
+                border: selectedPackage ? '1px solid var(--border-color)' : '1px solid var(--accent-primary)',
+                color: selectedPackage ? 'var(--text-main)' : 'var(--accent-primary)',
                 fontSize: '0.9rem',
                 fontWeight: 600
               }}
             >
+              <option value="" style={{ background: '#1e293b', color: 'var(--text-dim)' }}>
+                {packages.length === 0 ? '-- No hay paquetes calculados --' : '-- Selecciona un paquete calculado --'}
+              </option>
               {packages.map(pkg => {
                 const pName = getPkgName(pkg)
                 return (
-                  <option key={pName} value={pName} style={{ background: '#1e293b' }}>
+                  <option key={pName} value={pName} style={{ background: '#1e293b', color: '#fff' }}>
                     {pName} ({pkg.total_works?.toLocaleString() || 0} obras)
                   </option>
                 )
@@ -498,8 +511,32 @@ export default function TablePreviewTab({
         </div>
       </div>
 
-      {/* Main Table View */}
-      <div className="card-panel" style={{ padding: '0', overflow: 'hidden' }}>
+      {/* Conditional Rendering: Empty State vs Main Table View */}
+      {!selectedPackage ? (
+        <div className="glass-panel" style={{ padding: '60px 24px', textAlign: 'center', margin: '20px 0' }}>
+          <FolderArchive size={48} color="var(--text-dim)" style={{ margin: '0 auto 16px' }} />
+          <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
+            Ningún paquete seleccionado para vista previa
+          </h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: '500px', margin: '0 auto 20px', lineHeight: 1.6 }}>
+            {packages.length > 0
+              ? 'Selecciona uno de tus paquetes en el menú superior "📦 Paquete de Indicadores" para explorar sus 16 tablas, o conforma un nuevo corpus.'
+              : 'Conforma un corpus en el Conformador y presiona "Calcular Métricas" para explorar sus 16 tablas analíticas aquí.'}
+          </p>
+          {onGoToBuilder && (
+            <button
+              className="btn btn-primary"
+              onClick={onGoToBuilder}
+              style={{ margin: '0 auto', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+            >
+              <Search size={15} />
+              <span>Ir al Conformador de Corpus</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        /* Main Table View */
+        <div className="card-panel" style={{ padding: '0', overflow: 'hidden' }}>
         {/* Header Summary */}
         <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -906,6 +943,7 @@ export default function TablePreviewTab({
           </div>
         )}
       </div>
+      )}
 
       {/* Citing Works Modal */}
       <CitingWorksModal

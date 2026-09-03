@@ -182,7 +182,14 @@ export default function App() {
   const handleLogout = () => {
     setUser(null)
     localStorage.removeItem('tlachia_user')
-    fetchPackages(null)
+    setSelectedPackageForTablePreview(null)
+    setActiveJob(null)
+    setCorpusStats(null)
+    setResults([])
+    setTotalWorks(0)
+    setPackages([])
+    handleResetCorpus()
+    setActiveTab('builder')
   }
 
   // Explicit Search Trigger

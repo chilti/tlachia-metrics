@@ -270,9 +270,6 @@ export default function App() {
     localStorage.removeItem('tlachia_user')
     setSelectedPackageForTablePreview(null)
     setActiveJob(null)
-    setCorpusStats(null)
-    setResults([])
-    setTotalWorks(0)
     setPackages([])
     handleResetCorpus()
     setActiveTab('builder')
@@ -345,10 +342,7 @@ export default function App() {
 
     // 1. Limpiar completamente el estado anterior antes de cargar el nuevo corpus
     handleResetCorpus()
-    setResults([])
-    setTotalWorks(0)
-    setCorpusStats(null)
-    setPreviewData({ total: 0, results: [], page: 1, total_pages: 1 })
+    setPreviewData({ total: corpus.total_works_estimated || 0, results: [], page: 1, total_pages: 1 })
 
     // 2. Vincular o resetear la vista de tablas del paquete
     const cName = corpus.corpus_name || 'Mi_Corpus_TlachIA'
@@ -365,13 +359,33 @@ export default function App() {
     setSearchMode(mode)
 
     if (mode === 'ids') {
-      setIdsText((corpus.ids_list || []).join('\n'))
+      const idsArr = Array.isArray(corpus.ids_list) ? corpus.ids_list : []
+      setIdsText(idsArr.join('\n'))
+      setActiveTab('builder')
+      setHasSearched(true)
+      if (idsArr.length > 0) {
+        setPreviewLoading(true)
+        axios.post('/api/corpus/preview-ids', { work_ids: idsArr.slice(0, 500) })
+          .then(res => {
+            setPreviewData({
+              total: idsArr.length,
+              results: res.data.results || [],
+              page: 1,
+              total_pages: Math.ceil(idsArr.length / 20) || 1
+            })
+            setPreviewLoading(false)
+          })
+          .catch(err => {
+            console.error('Error previewing loaded IDs:', err)
+            setPreviewLoading(false)
+          })
+      }
     } else if (mode === 'filters') {
       const f = corpus.filters || {}
       setQuery(f.query || '')
       setStartYear(f.start_year || 2015)
       setEndYear(f.end_year || 2026)
-      setAllYears(f.all_years !== undefined ? f.all_years : true)
+      setAllYears(f.all_years !== undefined ? f.all_years : (f.start_year === 1900 && f.end_year === 2026))
       setOaStatus(f.oa_status || 'all')
 
       // Taxonomía
@@ -387,15 +401,54 @@ export default function App() {
       setInstitutionLogic(f.institution_logic || 'OR')
       setSelectedAuthors((f.author_ids || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
       setAuthorLogic(f.author_logic || 'OR')
-      setSelectedCountries((f.country_codes || []).map(d => typeof d === 'object' ? d : { code: d, name: d }))
+      setSelectedCountries((f.country_codes || []).map(c => typeof c === 'object' ? (c.code || c.id) : c).map(c => ({ code: c.code || c, name: c.name || c })))
       setCountryLogic(f.country_logic || 'OR')
       setSelectedTypes((f.work_types || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
-    }
 
-    setHasSearched(true)
-    setTimeout(() => {
-      fetchPreview(1)
-    }, 150)
+      setActiveTab('builder')
+      setHasSearched(true)
+
+      const previewPayload = {
+        query: f.query || '',
+        domain_names: (f.domain_names || []).map(d => typeof d === 'object' ? (d.domain_name || d.name) : d),
+        domain_ids: (f.domain_ids || []),
+        field_names: (f.field_names || []).map(d => typeof d === 'object' ? (d.field_name || d.name) : d),
+        field_ids: (f.field_ids || []),
+        subfield_names: (f.subfield_names || []).map(d => typeof d === 'object' ? (d.subfield_name || d.name) : d),
+        subfield_ids: (f.subfield_ids || []),
+        topic_ids: (f.topic_ids || []).map(t => typeof t === 'object' ? t.id : t),
+        topic_logic: f.topic_logic || 'OR',
+        source_ids: (f.source_ids || []).map(s => typeof s === 'object' ? s.id : s),
+        institution_ids: (f.institution_ids || []).map(i => typeof i === 'object' ? i.id : i),
+        institution_logic: f.institution_logic || 'OR',
+        author_ids: (f.author_ids || []).map(a => typeof a === 'object' ? a.id : a),
+        author_logic: f.author_logic || 'OR',
+        country_codes: (f.country_codes || []).map(c => typeof c === 'object' ? (c.code || c.id) : c),
+        country_logic: f.country_logic || 'OR',
+        work_types: (f.work_types || []).map(t => typeof t === 'object' ? (t.id || t.type_id) : t),
+        start_year: f.start_year || 1900,
+        end_year: f.end_year || 2026,
+        oa_status: (f.oa_status && f.oa_status !== 'all') ? f.oa_status : undefined,
+        limit: 20,
+        offset: 0
+      }
+
+      setPreviewLoading(true)
+      axios.post('/api/corpus/preview', previewPayload)
+        .then(res => {
+          setPreviewData({
+            total: res.data.total || 0,
+            results: res.data.results || [],
+            page: 1,
+            total_pages: res.data.total_pages || 1
+          })
+          setPreviewLoading(false)
+        })
+        .catch(err => {
+          console.error('Error previewing loaded filters corpus:', err)
+          setPreviewLoading(false)
+        })
+    }
   }
 
   // Fetch Preview Works from Filters
@@ -528,9 +581,6 @@ export default function App() {
   const handleReceiveCitingCorpus = (citingIds, corpusName) => {
     if (!citingIds || citingIds.length === 0) return
     handleResetCorpus()
-    setResults([])
-    setTotalWorks(0)
-    setCorpusStats(null)
     setSelectedPackageForTablePreview(null)
     setPackageName(corpusName || 'Corpus_Citantes')
     setSearchMode('ids')

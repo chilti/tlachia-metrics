@@ -18,7 +18,9 @@ import {
   ChevronRight,
   Sparkles,
   ExternalLink,
-  Eye
+  Eye,
+  SlidersHorizontal,
+  BookOpen
 } from 'lucide-react'
 import CitingWorksModal from './CitingWorksModal'
 
@@ -357,6 +359,74 @@ export default function TablePreviewTab({
           </div>
         </div>
       )}
+
+      {/* Context Navigation & Breadcrumb Header */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(99, 102, 241, 0.08) 100%)',
+        border: '1px solid rgba(56, 189, 248, 0.25)',
+        borderRadius: '14px',
+        padding: '14px 20px',
+        marginBottom: '16px',
+        flexWrap: 'wrap',
+        gap: '12px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{
+            width: '42px',
+            height: '42px',
+            borderRadius: '10px',
+            background: 'rgba(56, 189, 248, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--accent-primary)'
+          }}>
+            <FileSpreadsheet size={22} />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: '#fff' }}>
+                Explorador de Tablas de Indicadores
+              </h2>
+              {selectedPackage && (
+                <span style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.2)', color: 'var(--accent-primary)', fontWeight: 700 }}>
+                  {selectedPackage}
+                </span>
+              )}
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', margin: '2px 0 0' }}>
+              Visualizando indicadores calculados sobre el corpus. Puedes alternar entre las 16 entidades o volver al conformador manteniendo todos tus filtros intactos.
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {onGoToBuilder && (
+            <button
+              onClick={onGoToBuilder}
+              className="btn btn-primary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', padding: '8px 16px', fontWeight: 800, boxShadow: '0 2px 10px rgba(56, 189, 248, 0.3)' }}
+            >
+              <SlidersHorizontal size={15} />
+              <span>« Volver al Conformador</span>
+            </button>
+          )}
+          {onOpenDownloads && (
+            <button
+              onClick={onOpenDownloads}
+              className="btn btn-secondary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', padding: '8px 14px' }}
+            >
+              <FolderArchive size={15} />
+              <span>Centro de Descargas</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Top Controls Bar */}
       <div className="card-panel" style={{ padding: '18px 24px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', alignItems: 'center' }}>

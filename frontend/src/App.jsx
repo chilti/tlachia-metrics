@@ -45,9 +45,18 @@ import CitingWorksModal from './components/CitingWorksModal'
 
 const API_BASE = ''
 
+const loadSessionState = (key, fallback) => {
+  try {
+    const v = sessionStorage.getItem(`tlachia_${key}`)
+    return v !== null ? JSON.parse(v) : fallback
+  } catch {
+    return fallback
+  }
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState('builder') // 'builder' | 'tables' | 'downloads'
-  const [searchMode, setSearchMode] = useState('filters') // 'filters' | 'ids' | 'upload'
+  const [activeTab, setActiveTab] = useState(() => loadSessionState('activeTab', 'builder')) // 'builder' | 'tables' | 'downloads'
+  const [searchMode, setSearchMode] = useState(() => loadSessionState('searchMode', 'filters')) // 'filters' | 'ids' | 'upload'
 
   // User & ORCID Authentication State
   const [user, setUser] = useState(() => {
@@ -70,27 +79,27 @@ export default function App() {
   const [selectedPackageForTablePreview, setSelectedPackageForTablePreview] = useState(null)
 
   // Filters State (Cumulative Multiselect)
-  const [query, setQuery] = useState('')
-  const [selectedDomains, setSelectedDomains] = useState([])
-  const [selectedFields, setSelectedFields] = useState([])
-  const [selectedSubfields, setSelectedSubfields] = useState([])
-  const [selectedTopics, setSelectedTopics] = useState([])
-  const [topicLogic, setTopicLogic] = useState('OR')
-  const [selectedSources, setSelectedSources] = useState([])
-  const [selectedInstitutions, setSelectedInstitutions] = useState([])
-  const [institutionLogic, setInstitutionLogic] = useState('OR')
-  const [selectedAuthors, setSelectedAuthors] = useState([])
-  const [authorLogic, setAuthorLogic] = useState('OR')
-  const [selectedCountries, setSelectedCountries] = useState([])
-  const [countryLogic, setCountryLogic] = useState('OR')
-  const [selectedTypes, setSelectedTypes] = useState([])
-  const [startYear, setStartYear] = useState(2015)
-  const [endYear, setEndYear] = useState(2026)
-  const [allYears, setAllYears] = useState(true)
-  const [oaStatus, setOaStatus] = useState('all')
+  const [query, setQuery] = useState(() => loadSessionState('query', ''))
+  const [selectedDomains, setSelectedDomains] = useState(() => loadSessionState('selectedDomains', []))
+  const [selectedFields, setSelectedFields] = useState(() => loadSessionState('selectedFields', []))
+  const [selectedSubfields, setSelectedSubfields] = useState(() => loadSessionState('selectedSubfields', []))
+  const [selectedTopics, setSelectedTopics] = useState(() => loadSessionState('selectedTopics', []))
+  const [topicLogic, setTopicLogic] = useState(() => loadSessionState('topicLogic', 'OR'))
+  const [selectedSources, setSelectedSources] = useState(() => loadSessionState('selectedSources', []))
+  const [selectedInstitutions, setSelectedInstitutions] = useState(() => loadSessionState('selectedInstitutions', []))
+  const [institutionLogic, setInstitutionLogic] = useState(() => loadSessionState('institutionLogic', 'OR'))
+  const [selectedAuthors, setSelectedAuthors] = useState(() => loadSessionState('selectedAuthors', []))
+  const [authorLogic, setAuthorLogic] = useState(() => loadSessionState('authorLogic', 'OR'))
+  const [selectedCountries, setSelectedCountries] = useState(() => loadSessionState('selectedCountries', []))
+  const [countryLogic, setCountryLogic] = useState(() => loadSessionState('countryLogic', 'OR'))
+  const [selectedTypes, setSelectedTypes] = useState(() => loadSessionState('selectedTypes', []))
+  const [startYear, setStartYear] = useState(() => loadSessionState('startYear', 2015))
+  const [endYear, setEndYear] = useState(() => loadSessionState('endYear', 2026))
+  const [allYears, setAllYears] = useState(() => loadSessionState('allYears', true))
+  const [oaStatus, setOaStatus] = useState(() => loadSessionState('oaStatus', 'all'))
 
   // Direct IDs / DOIs State
-  const [idsText, setIdsText] = useState('')
+  const [idsText, setIdsText] = useState(() => loadSessionState('idsText', ''))
 
   // Upload State
   const [uploadedFile, setUploadedFile] = useState(null)
@@ -105,8 +114,8 @@ export default function App() {
 
   // Results & Pagination State
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [hasSearched, setHasSearched] = useState(false)
-  const [previewData, setPreviewData] = useState({ total: 0, results: [], page: 1, total_pages: 1 })
+  const [hasSearched, setHasSearched] = useState(() => loadSessionState('hasSearched', false))
+  const [previewData, setPreviewData] = useState(() => loadSessionState('previewData', { total: 0, results: [], page: 1, total_pages: 1 }))
   const [currentPage, setCurrentPage] = useState(1)
   const [isExportingCorpus, setIsExportingCorpus] = useState(null) // 'csv' | 'json' | null
   const pageSize = 20
@@ -117,7 +126,7 @@ export default function App() {
   const [selectedWorkForCiting, setSelectedWorkForCiting] = useState({ id: '', title: '', citations: 0, references: 0 })
 
   // Package & Calculation State
-  const [packageName, setPackageName] = useState('Mi_Corpus_TlachIA')
+  const [packageName, setPackageName] = useState(() => loadSessionState('packageName', 'Mi_Corpus_TlachIA'))
   const [activeJob, setActiveJob] = useState(null)
   const [jobModalOpen, setJobModalOpen] = useState(false)
 
@@ -133,6 +142,43 @@ export default function App() {
 
   // Health Status
   const [apiOnline, setApiOnline] = useState(true)
+
+  // Save Builder State in Session Storage to preserve across tabs and reloads
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('tlachia_activeTab', JSON.stringify(activeTab))
+      sessionStorage.setItem('tlachia_searchMode', JSON.stringify(searchMode))
+      sessionStorage.setItem('tlachia_query', JSON.stringify(query))
+      sessionStorage.setItem('tlachia_selectedDomains', JSON.stringify(selectedDomains))
+      sessionStorage.setItem('tlachia_selectedFields', JSON.stringify(selectedFields))
+      sessionStorage.setItem('tlachia_selectedSubfields', JSON.stringify(selectedSubfields))
+      sessionStorage.setItem('tlachia_selectedTopics', JSON.stringify(selectedTopics))
+      sessionStorage.setItem('tlachia_topicLogic', JSON.stringify(topicLogic))
+      sessionStorage.setItem('tlachia_selectedSources', JSON.stringify(selectedSources))
+      sessionStorage.setItem('tlachia_selectedInstitutions', JSON.stringify(selectedInstitutions))
+      sessionStorage.setItem('tlachia_institutionLogic', JSON.stringify(institutionLogic))
+      sessionStorage.setItem('tlachia_selectedAuthors', JSON.stringify(selectedAuthors))
+      sessionStorage.setItem('tlachia_authorLogic', JSON.stringify(authorLogic))
+      sessionStorage.setItem('tlachia_selectedCountries', JSON.stringify(selectedCountries))
+      sessionStorage.setItem('tlachia_countryLogic', JSON.stringify(countryLogic))
+      sessionStorage.setItem('tlachia_selectedTypes', JSON.stringify(selectedTypes))
+      sessionStorage.setItem('tlachia_startYear', JSON.stringify(startYear))
+      sessionStorage.setItem('tlachia_endYear', JSON.stringify(endYear))
+      sessionStorage.setItem('tlachia_allYears', JSON.stringify(allYears))
+      sessionStorage.setItem('tlachia_oaStatus', JSON.stringify(oaStatus))
+      sessionStorage.setItem('tlachia_idsText', JSON.stringify(idsText))
+      sessionStorage.setItem('tlachia_hasSearched', JSON.stringify(hasSearched))
+      sessionStorage.setItem('tlachia_previewData', JSON.stringify(previewData))
+      sessionStorage.setItem('tlachia_packageName', JSON.stringify(packageName))
+    } catch (e) {
+      console.warn('Could not persist session state:', e)
+    }
+  }, [
+    activeTab, searchMode, query, selectedDomains, selectedFields, selectedSubfields,
+    selectedTopics, topicLogic, selectedSources, selectedInstitutions, institutionLogic,
+    selectedAuthors, authorLogic, selectedCountries, countryLogic, selectedTypes,
+    startYear, endYear, allYears, oaStatus, idsText, hasSearched, previewData, packageName
+  ])
 
   // Check API Health
   useEffect(() => {
@@ -244,6 +290,16 @@ export default function App() {
     setHasSearched(false)
     setPreviewData({ total: 0, results: [], page: 1, total_pages: 1 })
     setPackageName('Mi_Corpus_TlachIA')
+
+    try {
+      Object.keys(sessionStorage).forEach(k => {
+        if (k.startsWith('tlachia_') && k !== 'tlachia_activeTab') {
+          sessionStorage.removeItem(k)
+        }
+      })
+    } catch (e) {
+      console.warn('Could not clear sessionStorage:', e)
+    }
   }
 
   // Load Saved Corpus from Corpus Manager

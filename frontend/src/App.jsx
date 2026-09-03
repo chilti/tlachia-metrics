@@ -388,8 +388,8 @@ export default function App() {
         query: scopusQuery.trim(),
         start_year: allYears ? undefined : startYear,
         end_year: allYears ? undefined : endYear,
-        max_results: 5000
-      })
+        max_results: 10000
+      }, { timeout: 180000 })
 
       const data = res.data
       setScopusCoverageStats({

@@ -56,6 +56,7 @@ export default function TablePreviewTab({
   onOpenDownloads,
   onGoToBuilder,
   onSendToCorpus,
+  onRefreshPackages,
   user
 }) {
   const [selectedPackage, setSelectedPackage] = useState(() => {
@@ -69,6 +70,9 @@ export default function TablePreviewTab({
   const [sortOrder, setSortOrder] = useState('desc')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
+
+  // ZIP Generation State
+  const [generatingZip, setGeneratingZip] = useState(false)
 
   // Citing Works Modal State
   const [citingModalOpen, setCitingModalOpen] = useState(false)
@@ -144,6 +148,36 @@ export default function TablePreviewTab({
       setSortOrder('desc')
     }
     setPage(1)
+  }
+
+  const handleGenerateZip = async () => {
+    if (!selectedPackage) return
+    setGeneratingZip(true)
+    try {
+      const res = await axios.post(
+        `/api/indicators/packages/${encodeURIComponent(selectedPackage)}/generate-zip`,
+        {},
+        {
+          headers: user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+        }
+      )
+      if (onRefreshPackages) {
+        await onRefreshPackages()
+      }
+      alert(`¡Paquete .ZIP generado exitosamente (${res.data.zip_size_mb} MB)! Ya se encuentra disponible en tu Centro de Descargas.`)
+      if (res.data.download_url) {
+        const a = document.createElement('a')
+        a.href = res.data.download_url
+        a.download = `${selectedPackage}.zip`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      }
+    } catch (err) {
+      alert('Error generando archivo ZIP: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setGeneratingZip(false)
+    }
   }
 
   const handleExportCSV = () => {
@@ -483,6 +517,94 @@ export default function TablePreviewTab({
 
           {/* Header Action Buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {/* On-Demand ZIP Generation Button */}
+            {(() => {
+              const currentPkgInfo = packages.find(p => getPkgName(p) === selectedPackage)
+              if (currentPkgInfo?.has_zip) {
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <a
+                      href={currentPkgInfo.download_url || `/api/indicators/download/${selectedPackage}`}
+                      download
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.2) 100%)',
+                        border: '1px solid #10b981',
+                        color: '#34d399',
+                        fontWeight: 700,
+                        fontSize: '0.78rem',
+                        textDecoration: 'none',
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 8px rgba(16, 185, 129, 0.2)'
+                      }}
+                      title={`Descargar paquete comprimido (${currentPkgInfo.zip_size_mb} MB)`}
+                    >
+                      <Download size={13} />
+                      <span>Descargar .ZIP ({currentPkgInfo.zip_size_mb} MB)</span>
+                    </a>
+
+                    <button
+                      onClick={handleGenerateZip}
+                      disabled={generatingZip}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '6px 10px',
+                        borderRadius: '8px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid var(--border-color)',
+                        color: 'var(--text-dim)',
+                        fontSize: '0.75rem',
+                        cursor: 'pointer'
+                      }}
+                      title="Regenerar archivo .ZIP con los datos actuales"
+                    >
+                      <RefreshCw size={12} className={generatingZip ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+                )
+              } else {
+                return (
+                  <button
+                    onClick={handleGenerateZip}
+                    disabled={generatingZip}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '7px 14px',
+                      borderRadius: '8px',
+                      background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.25) 0%, rgba(99, 102, 241, 0.25) 100%)',
+                      border: '1px solid var(--accent-primary)',
+                      color: 'var(--accent-primary)',
+                      fontWeight: 700,
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 10px rgba(56, 189, 248, 0.25)'
+                    }}
+                    title="Crear el paquete comprimido .ZIP con todos los 45 libros Excel y el JSON OpenAlex"
+                  >
+                    {generatingZip ? (
+                      <>
+                        <Loader2 size={13} className="animate-spin" />
+                        <span>Generando .ZIP...</span>
+                      </>
+                    ) : (
+                      <>
+                        <FolderArchive size={14} />
+                        <span>📦 Generar Paquete .ZIP</span>
+                      </>
+                    )}
+                  </button>
+                )
+              }
+            })()}
+
             {onGoToBuilder && (
               <button
                 onClick={onGoToBuilder}

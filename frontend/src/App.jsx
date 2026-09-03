@@ -839,6 +839,7 @@ export default function App() {
               onOpenDownloads={() => setActiveTab('downloads')}
               onGoToBuilder={() => setActiveTab('builder')}
               onSendToCorpus={handleReceiveCitingCorpus}
+              onRefreshPackages={fetchPackages}
               user={user}
             />
           </div>
@@ -1898,40 +1899,54 @@ export default function App() {
               </div>
             )}
 
-            {loadingPackages ? (
-              <div style={{ textAlign: 'center', padding: '60px' }}>
-                <Loader2 size={36} className="animate-spin" style={{ margin: '0 auto 16px', color: 'var(--accent-primary)' }} />
-                <p style={{ color: 'var(--text-muted)' }}>Explorando paquetes en disco...</p>
-              </div>
-            ) : packages.length === 0 ? (
-              <div className="glass-panel" style={{ padding: '60px', textAlign: 'center' }}>
-                <FolderArchive size={48} color="var(--text-dim)" style={{ margin: '0 auto 16px' }} />
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-                  {user ? 'Aún no has generado paquetes de métricas' : 'Aún no hay paquetes calculados'}
-                </h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '6px', maxWidth: '440px', margin: '6px auto 16px' }}>
-                  {user
-                    ? 'Conforma un corpus en la pestaña anterior y calcula los indicadores para guardarlos en tu centro de descargas.'
-                    : 'Inicia sesión con tu ORCID y conforma un corpus para generar tu primer paquete cienciométrico.'}
-                </p>
-                <button className="btn btn-primary" onClick={() => setActiveTab('builder')}>
-                  Ir al Conformador de Corpus
-                </button>
-              </div>
-            ) : (
-              <div className="packages-grid">
-                {packages.map((pkg) => (
-                  <div key={pkg.package_name} className="glass-panel package-card">
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <FolderArchive size={22} color="var(--accent-primary)" />
-                          <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff', wordBreak: 'break-all' }}>
-                            {pkg.package_name}
-                          </h3>
+            {(() => {
+              const zipPackages = packages.filter(p => p.has_zip)
+              if (loadingPackages) {
+                return (
+                  <div style={{ textAlign: 'center', padding: '60px' }}>
+                    <Loader2 size={36} className="animate-spin" style={{ margin: '0 auto 16px', color: 'var(--accent-primary)' }} />
+                    <p style={{ color: 'var(--text-muted)' }}>Explorando paquetes en disco...</p>
+                  </div>
+                )
+              }
+              if (zipPackages.length === 0) {
+                return (
+                  <div className="glass-panel" style={{ padding: '60px', textAlign: 'center' }}>
+                    <FolderArchive size={48} color="var(--text-dim)" style={{ margin: '0 auto 16px' }} />
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
+                      {user ? 'Aún no has generado paquetes .ZIP de descarga' : 'Aún no hay paquetes .ZIP listos'}
+                    </h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '6px', maxWidth: '480px', margin: '6px auto 16px' }}>
+                      {user
+                        ? 'Explora las tablas de tu corpus en la pestaña "Vista de Tablas" y presiona el botón "📦 Generar Paquete .ZIP" cuando estés seguro de los resultados para crear el archivo comprimido.'
+                        : 'Inicia sesión con tu ORCID, conforma un corpus y genera tu paquete .ZIP una vez que hayas revisado las tablas.'}
+                    </p>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
+                      <button className="btn btn-secondary" onClick={() => setActiveTab('tables')}>
+                        <FileSpreadsheet size={16} />
+                        Ir a Vista de Tablas
+                      </button>
+                      <button className="btn btn-primary" onClick={() => setActiveTab('builder')}>
+                        Ir al Conformador de Corpus
+                      </button>
+                    </div>
+                  </div>
+                )
+              }
+              return (
+                <div className="packages-grid">
+                  {zipPackages.map((pkg) => (
+                    <div key={pkg.package_name} className="glass-panel package-card">
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <FolderArchive size={22} color="var(--accent-primary)" />
+                            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff', wordBreak: 'break-all' }}>
+                              {pkg.package_name}
+                            </h3>
+                          </div>
+                          <span className="badge badge-green">Listo .ZIP</span>
                         </div>
-                        <span className="badge badge-green">Listo</span>
-                      </div>
 
                       <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
                         {pkg.owner_name || pkg.owner_orcid ? (
@@ -2016,7 +2031,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            )}
+            )})()}
           </div>
         )}
       </main>

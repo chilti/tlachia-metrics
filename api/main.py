@@ -652,12 +652,13 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
         with JOBS_LOCK:
             JOBS_STORE[job_id]['total_works'] = len(df)
 
-        # Ejecutar pipeline completo de 15 agregadores y 45 Excel + ZIP
+        # Ejecutar pipeline de 15 agregadores y 45 Excel + Parquets + JSON (sin generar ZIP automáticamente)
         result = engine.process_and_export_package(
             df=df,
             package_name=package_name,
             export_parquet=True,
             export_json=True,
+            create_zip=False,
             raw_json_source=raw_json_source,
             progress_callback=progress_callback
         )
@@ -678,7 +679,8 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             'tables_summary': result.get('tables_summary', {}),
             'search_strategy': strategy,
             'owner_orcid': owner_orcid,
-            'owner_name': owner_name
+            'owner_name': owner_name,
+            'has_zip': False
         }
         manifest_file = EXPORTS_DIR / package_name / "manifest.json"
         try:
@@ -686,22 +688,6 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
                 json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.warning(f"No se pudo guardar manifest.json: {e}")
-
-        # Registrar en la base de datos de usuarios si hay propietario
-        if owner_orcid:
-            try:
-                zip_p = EXPORTS_DIR / package_name / f"{package_name}.zip"
-                size_b = zip_p.stat().st_size if zip_p.exists() else 0
-                register_user_package(
-                    package_name=package_name,
-                    owner_orcid=owner_orcid,
-                    owner_name=owner_name,
-                    total_works=len(df),
-                    zip_size_bytes=size_b,
-                    source_mode=source_mode
-                )
-            except Exception as e:
-                logger.warning(f"Error registrando pertenencia en BD: {e}")
 
         with JOBS_LOCK:
             JOBS_STORE[job_id]['status'] = 'completed'
@@ -712,8 +698,8 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
                 'package_name': package_name,
                 'total_works': len(df),
                 'total_excel_files': result.get('total_excel_files', 45),
-                'zip_path': result.get('zip_path'),
-                'download_url': f"/api/indicators/download/{package_name}",
+                'zip_path': None,
+                'download_url': None,
                 'tables_summary': result.get('tables_summary', {}),
                 'search_strategy': strategy,
                 'owner_orcid': owner_orcid,
@@ -805,7 +791,7 @@ async def list_jobs(request: Request):
 
 # --- Descarga y Exploración de Paquetes Generados ---
 async def list_exported_packages(request: Request):
-    """Lista los paquetes disponibles. Si el usuario no es admin, filtra exclusivamente los suyos."""
+    """Lista los paquetes disponibles (con o sin .ZIP). Si el usuario no es admin, filtra exclusivamente los suyos."""
     requester_orcid = request.query_params.get('orcid') or request.headers.get('X-User-ORCID', '').strip()
     is_admin = is_user_admin(requester_orcid) if requester_orcid else False
 
@@ -816,10 +802,13 @@ async def list_exported_packages(request: Request):
                 zip_file = item / f"{item.name}.zip"
                 json_file = item / f"{item.name}_openalex_works.json"
                 excel_dir = item / "excel_reports"
+                parquet_dir = item / "parquet_tables"
                 manifest_file = item / "manifest.json"
 
-                if zip_file.exists():
-                    stat = zip_file.stat()
+                # Considerar paquete válido si tiene zip, excel_reports, parquet_tables o manifest
+                if zip_file.exists() or excel_dir.exists() or parquet_dir.exists() or manifest_file.exists():
+                    has_zip = zip_file.exists()
+                    stat = zip_file.stat() if has_zip else item.stat()
                     excel_count = len(list(excel_dir.glob('*.xlsx'))) if excel_dir.exists() else 0
                     
                     manifest_data = {}
@@ -836,8 +825,7 @@ async def list_exported_packages(request: Request):
 
                     # Filtrado de visibilidad:
                     # - Si es admin: ve todo
-                    # - Si es usuario regular autenticado: solo ve sus paquetes (o sin dueño si coincide)
-                    # - Si no está autenticado: no ve paquetes ajenos con dueño
+                    # - Si es usuario regular autenticado: solo ve sus paquetes
                     if requester_orcid and not is_admin:
                         if pkg_owner_orcid and pkg_owner_orcid != requester_orcid:
                             continue
@@ -851,12 +839,16 @@ async def list_exported_packages(request: Request):
                         except Exception:
                             pass
 
+                    zip_size_bytes = zip_file.stat().st_size if has_zip else 0
+                    zip_size_mb = round(zip_size_bytes / (1024 * 1024), 2) if has_zip else 0
+
                     packages.append({
                         'package_name': item.name,
                         'name': item.name,
-                        'zip_filename': f"{item.name}.zip",
-                        'zip_size_bytes': stat.st_size,
-                        'zip_size_mb': round(stat.st_size / (1024 * 1024), 2),
+                        'has_zip': has_zip,
+                        'zip_filename': f"{item.name}.zip" if has_zip else None,
+                        'zip_size_bytes': zip_size_bytes,
+                        'zip_size_mb': zip_size_mb,
                         'created_at': manifest_data.get('created_at') or datetime.fromtimestamp(stat.st_mtime).isoformat(),
                         'has_json': json_file.exists(),
                         'excel_files_count': excel_count,
@@ -868,7 +860,7 @@ async def list_exported_packages(request: Request):
                         'owner_orcid': pkg_owner_orcid,
                         'owner_name': pkg_owner_name,
                         'is_owner': (requester_orcid == pkg_owner_orcid) if requester_orcid else False,
-                        'download_url': f"/api/indicators/download/{item.name}"
+                        'download_url': f"/api/indicators/download/{item.name}" if has_zip else None
                     })
     
     packages.sort(key=lambda x: x['created_at'], reverse=True)
@@ -877,6 +869,93 @@ async def list_exported_packages(request: Request):
         'requester_orcid': requester_orcid,
         'is_admin': is_admin,
         'total_count': len(packages)
+    })
+
+
+async def generate_package_zip_endpoint(request: Request):
+    """
+    Genera el archivo .ZIP unificado bajo demanda para un corpus previamente calculado.
+    """
+    package_name = request.path_params.get('package_name', '').strip()
+    if not package_name:
+        return JSONResponse({'error': 'Nombre de paquete requerido.'}, status_code=400)
+
+    pkg_dir = EXPORTS_DIR / package_name
+    if not pkg_dir.exists() or not pkg_dir.is_dir():
+        return JSONResponse({'error': f'Corpus "{package_name}" no encontrado en disco.'}, status_code=404)
+
+    requester_orcid = request.headers.get('X-User-ORCID', '').strip() or request.query_params.get('orcid', '').strip()
+
+    # Recolectar archivos para el zip
+    excel_dir = pkg_dir / "excel_reports"
+    json_file = pkg_dir / f"{package_name}_openalex_works.json"
+    manifest_file = pkg_dir / "manifest.json"
+
+    files_to_zip = []
+    if excel_dir.exists():
+        files_to_zip.extend(list(excel_dir.glob('*.xlsx')))
+    if json_file.exists():
+        files_to_zip.append(json_file)
+
+    if not files_to_zip:
+        return JSONResponse({'error': 'No se encontraron reportes Excel o JSON para empaquetar.'}, status_code=400)
+
+    zip_path = pkg_dir / f"{package_name}.zip"
+    try:
+        from openalex_indicators_engine.exporters.zip_packager import create_unified_indicators_zip
+        create_unified_indicators_zip(files_to_zip, zip_path)
+    except Exception as e:
+        logger.error(f"Error empaquetando zip para {package_name}: {e}", exc_info=True)
+        return JSONResponse({'error': f'Error creando archivo ZIP: {str(e)}'}, status_code=500)
+
+    stat = zip_path.stat()
+    size_b = stat.st_size
+
+    # Actualizar manifest.json
+    manifest_data = {}
+    if manifest_file.exists():
+        try:
+            with open(manifest_file, 'r', encoding='utf-8') as mf:
+                manifest_data = json.load(mf)
+        except Exception:
+            pass
+
+    manifest_data['has_zip'] = True
+    manifest_data['zip_size_bytes'] = size_b
+    manifest_data['zip_created_at'] = datetime.now().isoformat()
+
+    try:
+        with open(manifest_file, 'w', encoding='utf-8') as mf:
+            json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Error actualizando manifest.json: {e}")
+
+    # Registrar en base de datos de usuarios para que aparezca formalmente en Centro de Descargas
+    owner_orcid = manifest_data.get('owner_orcid') or requester_orcid or ''
+    owner_name = manifest_data.get('owner_name') or ''
+    total_works = manifest_data.get('total_works') or 0
+    source_mode = manifest_data.get('source_mode') or 'filters'
+
+    if owner_orcid:
+        try:
+            register_user_package(
+                package_name=package_name,
+                owner_orcid=owner_orcid,
+                owner_name=owner_name,
+                total_works=total_works,
+                zip_size_bytes=size_b,
+                source_mode=source_mode
+            )
+        except Exception as e:
+            logger.warning(f"Error registrando en user_packages.db: {e}")
+
+    return JSONResponse({
+        'status': 'success',
+        'message': f'Paquete .ZIP para "{package_name}" generado exitosamente.',
+        'package_name': package_name,
+        'zip_size_bytes': size_b,
+        'zip_size_mb': round(size_b / (1024 * 1024), 2),
+        'download_url': f"/api/indicators/download/{package_name}"
     })
 
 
@@ -1127,6 +1206,7 @@ routes = [
     Route('/api/jobs/status/{job_id}', get_job_status, methods=['GET']),
     Route('/api/jobs', list_jobs, methods=['GET']),
     Route('/api/indicators/packages', list_exported_packages, methods=['GET']),
+    Route('/api/indicators/packages/{package_name}/generate-zip', generate_package_zip_endpoint, methods=['POST']),
     Route('/api/indicators/table-preview/{package_name}', preview_table_endpoint, methods=['GET']),
     Route('/api/citations/citing-works/{package_name}', get_citing_works_endpoint, methods=['GET']),
     Route('/api/citations/derive-corpus', derive_citing_corpus_endpoint, methods=['POST']),

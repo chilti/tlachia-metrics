@@ -70,15 +70,16 @@ class TlachIAMetricsEngine:
                                    output_dir: Optional[Union[str, Path]] = None,
                                    export_parquet: bool = True,
                                    export_json: bool = True,
+                                   create_zip: bool = True,
                                    raw_json_source: Optional[Union[str, Path]] = None,
                                    progress_callback: Optional[Any] = None) -> Dict[str, Any]:
         """
-        Ejecuta el pipeline completo:
-        1. Calcula indicadores para todas las 16 entidades (Histórico, 2021-2025 y Trend).
+        Ejecuta el pipeline de indicadores:
+        1. Calcula indicadores para las 15 entidades (Histórico, 2021-2025 y Trend).
         2. Guarda cada tabla en archivo Excel formateado (.xlsx).
         3. Exporta el archivo JSON completo de registros del corpus.
-        4. Opcionalmente exporta las tablas Parquet.
-        5. Empaqueta todos los archivos Excel y el JSON completo en un único archivo comprimido .zip.
+        4. Opcionalmente exporta las tablas Parquet para consulta interactiva en tiempo real.
+        5. Opcionalmente empaqueta en un único archivo comprimido .zip bajo demanda.
         """
         if df is None or len(df) == 0:
             raise ValueError('El DataFrame del corpus está vacío.')
@@ -173,12 +174,14 @@ class TlachIAMetricsEngine:
 
             package_files_to_zip.append(json_file_path)
 
-        # 5. Empaquetado unificado en un solo archivo .zip
-        if progress_callback:
-            progress_callback(92, 'Generando archivo .ZIP unificado...')
-        zip_path = out_d / f'{package_name}.zip'
-        create_unified_indicators_zip(package_files_to_zip, zip_path)
-        logger.info(f'Paquete unificado generado con éxito en: {zip_path}')
+        # 5. Empaquetado unificado en un solo archivo .zip (opcional / bajo demanda)
+        zip_path = None
+        if create_zip:
+            if progress_callback:
+                progress_callback(92, 'Generando archivo .ZIP unificado...')
+            zip_path = out_d / f'{package_name}.zip'
+            create_unified_indicators_zip(package_files_to_zip, zip_path)
+            logger.info(f'Paquete unificado generado con éxito en: {zip_path}')
 
         if progress_callback:
             progress_callback(100, '¡Proceso completado exitosamente!')
@@ -186,9 +189,9 @@ class TlachIAMetricsEngine:
         return {
             'package_name': package_name,
             'total_works': len(df),
-            'total_excel_files': len(package_files_to_zip),
+            'total_excel_files': len([f for f in package_files_to_zip if str(f).endswith('.xlsx')]),
             'json_file_path': str(json_file_path) if json_file_path else None,
-            'zip_path': str(zip_path),
+            'zip_path': str(zip_path) if zip_path else None,
             'excel_directory': str(excel_dir),
             'tables_summary': tables_summary
         }

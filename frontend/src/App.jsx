@@ -242,7 +242,25 @@ export default function App() {
   // Load Saved Corpus from Corpus Manager
   const handleLoadSavedCorpus = (corpus) => {
     if (!corpus) return
-    setPackageName(corpus.corpus_name || 'Mi_Corpus_TlachIA')
+
+    // 1. Limpiar completamente el estado anterior antes de cargar el nuevo corpus
+    handleResetCorpus()
+    setResults([])
+    setTotalWorks(0)
+    setCorpusStats(null)
+    setPreviewData({ total: 0, results: [], page: 1, total_pages: 1 })
+
+    // 2. Vincular o resetear la vista de tablas del paquete
+    const cName = corpus.corpus_name || 'Mi_Corpus_TlachIA'
+    setPackageName(cName)
+    const matchingPackage = packages.find(p => (p.package_name || p.name) === cName)
+    if (matchingPackage) {
+      setSelectedPackageForTablePreview(cName)
+    } else {
+      setSelectedPackageForTablePreview(null)
+    }
+
+    // 3. Cargar los nuevos parámetros del corpus
     const mode = corpus.source_mode || 'filters'
     setSearchMode(mode)
 
@@ -253,6 +271,7 @@ export default function App() {
       setQuery(f.query || '')
       setStartYear(f.start_year || 2015)
       setEndYear(f.end_year || 2026)
+      setAllYears(f.all_years !== undefined ? f.all_years : true)
       setOaStatus(f.oa_status || 'all')
 
       // Taxonomía
@@ -260,12 +279,16 @@ export default function App() {
       setSelectedFields((f.field_names || f.fields || []).map(d => typeof d === 'object' ? d : { id: d, name: d, field_name: d }))
       setSelectedSubfields((f.subfield_names || f.subfields || []).map(d => typeof d === 'object' ? d : { id: d, name: d, subfield_name: d }))
       setSelectedTopics((f.topic_ids || f.topics || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
+      setTopicLogic(f.topic_logic || 'OR')
 
       // Entidades
       setSelectedSources((f.source_ids || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
       setSelectedInstitutions((f.institution_ids || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
+      setInstitutionLogic(f.institution_logic || 'OR')
       setSelectedAuthors((f.author_ids || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
+      setAuthorLogic(f.author_logic || 'OR')
       setSelectedCountries((f.country_codes || []).map(d => typeof d === 'object' ? d : { code: d, name: d }))
+      setCountryLogic(f.country_logic || 'OR')
       setSelectedTypes((f.work_types || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
     }
 
@@ -324,6 +347,11 @@ export default function App() {
   // Receive Citing Works and load into Corpus Builder
   const handleReceiveCitingCorpus = (citingIds, corpusName) => {
     if (!citingIds || citingIds.length === 0) return
+    handleResetCorpus()
+    setResults([])
+    setTotalWorks(0)
+    setCorpusStats(null)
+    setSelectedPackageForTablePreview(null)
     setPackageName(corpusName || 'Corpus_Citantes')
     setSearchMode('ids')
     const idsString = citingIds.join('\n')

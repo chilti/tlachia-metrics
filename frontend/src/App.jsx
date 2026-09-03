@@ -47,6 +47,16 @@ import ScopusControls from './components/ScopusControls'
 
 const API_BASE = ''
 
+export const resolveDownloadUrl = (url) => {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  const clean = url.startsWith('/') ? url : `/${url}`
+  const path = typeof window !== 'undefined' ? (window.location.pathname || '') : ''
+  const matched = path.match(/^\/(tlachiametrics|tlachia-metrics|tlachia_metrics|tlachia)/i)
+  const prefix = matched ? `/${matched[1]}` : ''
+  return `${prefix}${clean}`
+}
+
 const loadSessionState = (key, fallback) => {
   try {
     const v = sessionStorage.getItem(`tlachia_${key}`)
@@ -2794,7 +2804,7 @@ export default function App() {
 
                     <div style={{ display: 'flex', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', flexWrap: 'wrap' }}>
                       <a
-                        href={pkg.download_url}
+                        href={resolveDownloadUrl(pkg.download_url)}
                         className="btn btn-success"
                         style={{ flex: 1, textDecoration: 'none', minWidth: '120px' }}
                         download
@@ -3402,7 +3412,7 @@ export default function App() {
             {/* Action Buttons */}
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border-subtle)', paddingTop: '16px' }}>
               <a
-                href={selectedPackageDetails.download_url}
+                href={resolveDownloadUrl(selectedPackageDetails.download_url)}
                 className="btn btn-success"
                 style={{ flex: 1, textDecoration: 'none', justifyContent: 'center', padding: '12px' }}
                 download

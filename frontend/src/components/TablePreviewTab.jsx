@@ -24,6 +24,16 @@ import {
 } from 'lucide-react'
 import CitingWorksModal from './CitingWorksModal'
 
+const resolveDownloadUrl = (url) => {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  const clean = url.startsWith('/') ? url : `/${url}`
+  const path = typeof window !== 'undefined' ? (window.location.pathname || '') : ''
+  const matched = path.match(/^\/(tlachiametrics|tlachia-metrics|tlachia_metrics|tlachia)/i)
+  const prefix = matched ? `/${matched[1]}` : ''
+  return `${prefix}${clean}`
+}
+
 const TABLE_OPTIONS = [
   { id: 'organizations', name: 'Organizations (Instituciones)', icon: '🏢' },
   { id: 'locations', name: 'Locations (Países)', icon: '🌐' },
@@ -185,7 +195,7 @@ export default function TablePreviewTab({
       alert(`¡Paquete .ZIP generado exitosamente (${res.data.zip_size_mb} MB)! Ya se encuentra disponible en tu Centro de Descargas.`)
       if (res.data.download_url) {
         const a = document.createElement('a')
-        a.href = res.data.download_url
+        a.href = resolveDownloadUrl(res.data.download_url)
         a.download = `${selectedPackage}.zip`
         document.body.appendChild(a)
         a.click()
@@ -637,7 +647,7 @@ export default function TablePreviewTab({
                 return (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <a
-                      href={currentPkgInfo.download_url || `/api/indicators/download/${selectedPackage}`}
+                      href={resolveDownloadUrl(currentPkgInfo.download_url || `/api/indicators/download/${selectedPackage}`)}
                       download
                       style={{
                         display: 'flex',

@@ -17,15 +17,41 @@ DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "users.db"
 
 
+import re
+
 def _clean_set_from_env(env_var_names: list) -> set:
-    """Extrae y normaliza un conjunto de identificadores ORCID desde variables de entorno."""
-    for name in env_var_names:
-        raw_val = os.getenv(name)
-        if raw_val:
-            clean_str = raw_val.replace('"', '').replace("'", "").strip()
-            if clean_str:
-                return {item.strip() for item in clean_str.split(",") if item.strip()}
-    return set()
+    """
+    Extrae y normaliza un conjunto de identificadores ORCID.
+    Lee directamente el archivo .env de forma dinámica y tolerante a formatos de comillas,
+    permitiendo agregar nuevos usuarios en .env sin necesidad de reiniciar el servidor ni recompilar.
+    """
+    found_orcids = set()
+    env_file = Path(__file__).resolve().parent.parent / ".env"
+    
+    # 1. Lectura dinámica directa del archivo .env
+    if env_file.exists():
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line_clean = line.strip()
+                    if not line_clean or line_clean.startswith("#"):
+                        continue
+                    if any(line_clean.startswith(f"{name}=") for name in env_var_names):
+                        _, val = line_clean.split("=", 1)
+                        matches = re.findall(r"\b\d{4}-\d{4}-\d{4}-[\dXx]{4}\b", val)
+                        found_orcids.update(matches)
+        except Exception as e:
+            logger.warning(f"No se pudo leer .env dinámicamente: {e}")
+
+    # 2. Fallback a variables de entorno del sistema si no se encontró en .env
+    if not found_orcids:
+        for name in env_var_names:
+            raw_val = os.getenv(name)
+            if raw_val:
+                matches = re.findall(r"\b\d{4}-\d{4}-\d{4}-[\dXx]{4}\b", raw_val)
+                found_orcids.update(matches)
+
+    return found_orcids
 
 
 def get_admin_orcids() -> set:

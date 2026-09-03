@@ -34,7 +34,6 @@ const TABLE_OPTIONS = [
   { id: 'research_areas_macro_topics', name: 'Domains (Dominios)', icon: '🧭' },
   { id: 'research_areas_meso_topics', name: 'Fields (Campos)', icon: '🔬' },
   { id: 'research_areas_micro_topics', name: 'Subfields / Topics (Subcampos)', icon: '🔍' },
-  { id: 'research_areas_esi', name: 'Research Areas ESI', icon: '🌟' },
   { id: 'research_areas_sdg', name: 'Research Areas SDG (ODS)', icon: '🎯' },
   { id: 'concepts', name: 'Concepts (Conceptos)', icon: '💡' },
   { id: 'keywords', name: 'Keywords (Palabras Clave)', icon: '🏷️' },
@@ -184,7 +183,7 @@ export default function TablePreviewTab({
           No hay paquetes calculados aún
         </h3>
         <p style={{ color: 'var(--text-dim)', fontSize: '0.9rem', maxWidth: '450px', margin: '0 auto 20px' }}>
-          Conforma un corpus en la primera pestaña y presiona "Calcular 48 Indicadores" para explorar interactivamente todas las tablas de entidades.
+          Conforma un corpus en la primera pestaña y presiona "Calcular Indicadores" para explorar interactivamente todas las tablas de entidades.
         </p>
       </div>
     )
@@ -232,7 +231,7 @@ export default function TablePreviewTab({
           {/* Table Entity Selector (Combo) */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
-              📊 Entidad / Tabla (16 Disponibles)
+              📊 Entidad / Tabla (15 Disponibles)
             </label>
             <select
               value={selectedTable}

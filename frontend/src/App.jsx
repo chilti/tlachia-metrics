@@ -1773,7 +1773,7 @@ export default function App() {
                     user.is_admin ? (
                       `Visualizando todos los paquetes disponibles en el sistema (${packages.length} paquetes).`
                     ) : (
-                      `Descarga y gestión de tus 48 libros Excel, JSON OpenAlex y Parquets asociados a tu ORCID (${user.orcid}).`
+                      `Descarga y gestión de tus 45 libros Excel, JSON OpenAlex y Parquets asociados a tu ORCID (${user.orcid}).`
                     )
                   ) : (
                     'Conéctate con ORCID para asociar, almacenar y visualizar tus paquetes cienciométricos personales.'
@@ -1887,7 +1887,7 @@ export default function App() {
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span>Archivos Excel:</span>
-                          <strong style={{ color: 'var(--text-muted)' }}>48 libros (.xlsx)</strong>
+                          <strong style={{ color: 'var(--text-muted)' }}>45 libros (.xlsx)</strong>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span>Corpus JSON OpenAlex:</span>
@@ -2138,7 +2138,7 @@ export default function App() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-dim)' }}>
                 <span>Libros Excel Estilizados:</span>
-                <span>48 Reportes (Histórico, 2021-2025, Anual Trend)</span>
+                <span>45 Reportes (Histórico, 2021-2025, Anual Trend)</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-dim)' }}>
                 <span>Dataset Completo:</span>
@@ -2168,7 +2168,7 @@ export default function App() {
                   }}
                 >
                   <FileSpreadsheet size={18} />
-                  <span>Explorar y Revisar Tablas (16 Entidades)</span>
+                  <span>Explorar y Revisar Tablas (15 Entidades)</span>
                 </button>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
@@ -2253,9 +2253,9 @@ export default function App() {
               <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Libros Excel</span>
                 <strong style={{ fontSize: '1.1rem', color: '#34d399', fontFamily: 'var(--font-mono)' }}>
-                  48 Libros
+                  45 Libros
                 </strong>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>16 ent. × 3 periodos</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>15 ent. × 3 periodos</span>
               </div>
 
               <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
@@ -2340,7 +2340,7 @@ export default function App() {
             <div style={{ marginTop: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                 <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>
-                  Batería de 48 Tablas Excel Incluidas (16 Entidades × 3 Temporalidades)
+                  Batería de 45 Tablas Excel Incluidas (15 Entidades × 3 Temporalidades)
                 </span>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
                   Full • 2021-2025 • Trend
@@ -2359,11 +2359,10 @@ export default function App() {
                 <div>🧭 9. Macro Topics.xlsx</div>
                 <div>🔬 10. Meso Topics.xlsx</div>
                 <div>🔍 11. Micro Topics.xlsx</div>
-                <div>🌟 12. Research Areas ESI.xlsx</div>
-                <div>🎯 13. Research Areas SDG.xlsx</div>
-                <div>💡 14. Concepts.xlsx</div>
-                <div>🏷️ 15. Keywords.xlsx</div>
-                <div>💰 16. Economic APC Breakdown.xlsx</div>
+                <div>🎯 12. Research Areas SDG.xlsx</div>
+                <div>💡 13. Concepts.xlsx</div>
+                <div>🏷️ 14. Keywords.xlsx</div>
+                <div>💰 15. Economic APC Breakdown.xlsx</div>
               </div>
             </div>
 

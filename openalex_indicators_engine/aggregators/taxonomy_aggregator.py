@@ -89,12 +89,6 @@ class TopicAggregator(BaseAggregator):
         super().__init__(entity_column='topic')
 
 
-class ESIAggregator(BaseAggregator):
-    """Agrega por Subcampo ESI (alias de SubfieldAggregator para compatibilidad)."""
-    def __init__(self):
-        super().__init__(entity_column='subfield')
-
-
 # ── Backwards-compat aliases (usados en código legado) ────────────────────────
 MacroTopicsAggregator = DomainAggregator
 MesoTopicsAggregator  = FieldAggregator

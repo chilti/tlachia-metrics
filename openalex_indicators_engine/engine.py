@@ -23,7 +23,7 @@ from .aggregators.researchers_aggregator import ResearchersAggregator
 from .aggregators.sources_aggregator import SourcesAggregator
 from .aggregators.funding_aggregator import FundingAggregator
 from .aggregators.taxonomy_aggregator import (
-    DomainAggregator, FieldAggregator, SubfieldAggregator, TopicAggregator, ESIAggregator, SDGAggregator,
+    DomainAggregator, FieldAggregator, SubfieldAggregator, TopicAggregator, SDGAggregator,
     MacroTopicsAggregator, MesoTopicsAggregator, MicroTopicsAggregator  # backwards-compat aliases
 )
 from .aggregators.concepts_keywords_aggregator import ConceptsAggregator, KeywordsAggregator
@@ -108,7 +108,6 @@ class TlachIAMetricsEngine:
             'Research Areas Field': FieldAggregator(),
             'Research Areas Subfield': SubfieldAggregator(),
             'Research Areas Topic': TopicAggregator(),
-            'Research Areas ESI': ESIAggregator(),
             'Research Areas SDG': SDGAggregator(),
             'Concepts': ConceptsAggregator(),
             'Keywords': KeywordsAggregator(),
@@ -187,7 +186,7 @@ class TlachIAMetricsEngine:
         return {
             'package_name': package_name,
             'total_works': len(df),
-            'total_excel_files': 48,
+            'total_excel_files': len(package_files_to_zip),
             'json_file_path': str(json_file_path) if json_file_path else None,
             'zip_path': str(zip_path),
             'excel_directory': str(excel_dir),

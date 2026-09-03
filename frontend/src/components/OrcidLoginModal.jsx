@@ -107,7 +107,7 @@ export default function OrcidLoginModal({ isOpen, onClose, reason = 'general' })
 
           <p style={{ fontSize: '0.9rem', color: 'var(--text-dim, #9ca3af)', lineHeight: '1.5' }}>
             {reason === 'job_creation' ? (
-              <>Para conformar corpus y generar paquetes de 48 indicadores analíticos, conecta tu identificador oficial de <strong>ORCID</strong>.</>
+              <>Para conformar corpus y generar paquetes de 45 indicadores analíticos, conecta tu identificador oficial de <strong>ORCID</strong>.</>
             ) : reason === 'downloads' ? (
               <>Tu <strong>Centro de Descargas</strong> personal guarda y organiza tus paquetes .ZIP asociados a tu registro de investigador.</>
             ) : (
@@ -135,7 +135,7 @@ export default function OrcidLoginModal({ isOpen, onClose, reason = 'general' })
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Sparkles size={16} color="#a6ce39" />
-            <span><strong>Cálculo de 48 Indicadores:</strong> Excel y Parquets automáticos.</span>
+            <span><strong>Cálculo de 45 Indicadores:</strong> Excel y Parquets automáticos.</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <ShieldCheck size={16} color="#10b981" />

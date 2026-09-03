@@ -4,7 +4,7 @@ api/main.py
 Servicios REST no bloqueantes para:
 1. Búsqueda y autocompletado de entidades (Tópicos, Fuentes/Revistas, Instituciones, Autores).
 2. Construcción, filtrado y vista previa interactiva de corpus bibliográficos en ClickHouse.
-3. Orquestación y ejecución en segundo plano del cómputo de 48 indicadores analíticos.
+3. Orquestación y ejecución en segundo plano del cómputo de 45 indicadores analíticos.
 4. Consulta de estado en tiempo real (progreso 0-100% y etapas).
 5. Descarga de paquetes .ZIP y catálogo de exportaciones.
 """
@@ -652,7 +652,7 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
         with JOBS_LOCK:
             JOBS_STORE[job_id]['total_works'] = len(df)
 
-        # Ejecutar pipeline completo de 16 agregadores y 48 Excel + ZIP
+        # Ejecutar pipeline completo de 15 agregadores y 45 Excel + ZIP
         result = engine.process_and_export_package(
             df=df,
             package_name=package_name,
@@ -674,7 +674,7 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             'ids_count': len(payload.get('ids', [])) if source_mode == 'ids' else None,
             'uploaded_file': payload.get('file_path') if source_mode == 'upload' else None,
             'created_at': datetime.now().isoformat(),
-            'total_excel_files': result.get('total_excel_files', 48),
+            'total_excel_files': result.get('total_excel_files', 45),
             'tables_summary': result.get('tables_summary', {}),
             'search_strategy': strategy,
             'owner_orcid': owner_orcid,
@@ -711,7 +711,7 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             JOBS_STORE[job_id]['result'] = {
                 'package_name': package_name,
                 'total_works': len(df),
-                'total_excel_files': result.get('total_excel_files', 48),
+                'total_excel_files': result.get('total_excel_files', 45),
                 'zip_path': result.get('zip_path'),
                 'download_url': f"/api/indicators/download/{package_name}",
                 'tables_summary': result.get('tables_summary', {}),
@@ -892,7 +892,6 @@ AVAILABLE_INDICATOR_TABLES = [
     {"id": "research_areas_macro_topics", "name": "Domains / Macro Topics", "icon": "🧭", "slug": "research_areas_macro_topics"},
     {"id": "research_areas_meso_topics", "name": "Fields / Meso Topics", "icon": "🔬", "slug": "research_areas_meso_topics"},
     {"id": "research_areas_micro_topics", "name": "Subfields / Micro Topics", "icon": "🔍", "slug": "research_areas_micro_topics"},
-    {"id": "research_areas_esi", "name": "Research Areas ESI", "icon": "🌟", "slug": "research_areas_esi"},
     {"id": "research_areas_sdg", "name": "Research Areas SDG (ODS)", "icon": "🎯", "slug": "research_areas_sdg"},
     {"id": "concepts", "name": "Concepts", "icon": "💡", "slug": "concepts"},
     {"id": "keywords", "name": "Keywords", "icon": "🏷️", "slug": "keywords"},
@@ -918,8 +917,6 @@ TABLE_SLUG_MAP = {
     "research_areas_macro_topics": "research_areas_macro_topics",
     "research_areas_meso_topics": "research_areas_meso_topics",
     "research_areas_micro_topics": "research_areas_micro_topics",
-    "esi": "research_areas_esi",
-    "research_areas_esi": "research_areas_esi",
     "sdg": "research_areas_sdg",
     "research_areas_sdg": "research_areas_sdg",
     "concepts": "concepts",

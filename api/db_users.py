@@ -2,7 +2,9 @@
 api/db_users.py - Persistencia SQLite y Control de Acceso ORCID para TlachIA Metrics
 """
 import os
+import uuid
 import sqlite3
+from typing import Optional, List, Dict, Any
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -108,10 +110,10 @@ def init_users_db():
 
 
 def save_user_corpus(
-    corpus_id: str,
-    owner_orcid: str,
-    owner_name: str,
-    corpus_name: str,
+    corpus_id: Optional[str] = None,
+    owner_orcid: str = "",
+    owner_name: str = "",
+    corpus_name: str = "",
     description: str = "",
     source_mode: str = "filters",
     filters: dict = None,
@@ -125,6 +127,9 @@ def save_user_corpus(
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if not corpus_id:
+        corpus_id = str(uuid.uuid4())
 
     import json
     filters_json = json.dumps(filters or {}, ensure_ascii=False)

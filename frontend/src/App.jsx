@@ -309,6 +309,35 @@ export default function App() {
     }
   }
 
+  // Receive Citing Works and load into Corpus Builder
+  const handleReceiveCitingCorpus = (citingIds, corpusName) => {
+    if (!citingIds || citingIds.length === 0) return
+    setPackageName(corpusName || 'Corpus_Citantes')
+    setSearchMode('ids')
+    const idsString = citingIds.join('\n')
+    setIdsText(idsString)
+    setActiveTab('builder')
+    setHasSearched(true)
+    setPreviewLoading(true)
+
+    // Consultar previsualización de IDs de inmediato
+    axios.post('/api/corpus/preview-ids', { work_ids: citingIds.slice(0, 500) })
+      .then(res => {
+        setPreviewData({
+          total: citingIds.length,
+          results: res.data.results || [],
+          page: 1,
+          total_pages: Math.ceil(citingIds.length / 50) || 1
+        })
+      })
+      .catch(err => {
+        console.error('Error previewing citing IDs:', err)
+      })
+      .finally(() => {
+        setPreviewLoading(false)
+      })
+  }
+
   // Preview Direct IDs
   const handlePreviewIds = async () => {
     if (!user) {
@@ -743,6 +772,8 @@ export default function App() {
               packages={packages}
               initialPackage={selectedPackageForTablePreview}
               onOpenDownloads={() => setActiveTab('downloads')}
+              onSendToCorpus={handleReceiveCitingCorpus}
+              user={user}
             />
           </div>
         ) : activeTab === 'builder' ? (

@@ -20,6 +20,7 @@ import {
   ExternalLink,
   Eye
 } from 'lucide-react'
+import CitingWorksModal from './CitingWorksModal'
 
 const TABLE_OPTIONS = [
   { id: 'organizations', name: 'Organizations (Instituciones)', icon: '🏢' },
@@ -49,7 +50,9 @@ const PERIOD_OPTIONS = [
 export default function TablePreviewTab({
   packages = [],
   initialPackage = null,
-  onOpenDownloads
+  onOpenDownloads,
+  onSendToCorpus,
+  user
 }) {
   const [selectedPackage, setSelectedPackage] = useState(() => {
     if (initialPackage) return initialPackage
@@ -62,6 +65,10 @@ export default function TablePreviewTab({
   const [sortOrder, setSortOrder] = useState('desc')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
+
+  // Citing Works Modal State
+  const [citingModalOpen, setCitingModalOpen] = useState(false)
+  const [selectedCitingEntity, setSelectedCitingEntity] = useState({ type: '', name: '' })
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -109,6 +116,14 @@ export default function TablePreviewTab({
         setLoading(false)
       })
   }, [selectedPackage, selectedTable, selectedPeriod, page, pageSize, sortBy, sortOrder, searchQuery])
+
+  const handleOpenCitingModal = (entityType, entityName) => {
+    setSelectedCitingEntity({
+      type: entityType,
+      name: entityName
+    })
+    setCitingModalOpen(true)
+  }
 
   const handleSort = (column) => {
     if (sortBy === column) {
@@ -345,40 +360,64 @@ export default function TablePreviewTab({
             </div>
           </div>
 
-          {/* Pagination Top Indicator */}
+          {/* Header Action Buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-              Página <strong>{tableData.page}</strong> de <strong>{tableData.total_pages}</strong>
-            </span>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <button
-                disabled={page <= 1 || loading}
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid var(--border-color)',
-                  color: page <= 1 ? 'var(--text-muted)' : 'var(--text-main)',
-                  cursor: page <= 1 ? 'not-allowed' : 'pointer'
-                }}
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                disabled={page >= tableData.total_pages || loading}
-                onClick={() => setPage(p => Math.min(tableData.total_pages, p + 1))}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid var(--border-color)',
-                  color: page >= tableData.total_pages ? 'var(--text-muted)' : 'var(--text-main)',
-                  cursor: page >= tableData.total_pages ? 'not-allowed' : 'pointer'
-                }}
-              >
-                <ChevronRight size={16} />
-              </button>
+            <button
+              onClick={() => handleOpenCitingModal('corpus', '')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                borderRadius: '8px',
+                background: 'rgba(251, 191, 36, 0.12)',
+                border: '1px solid rgba(251, 191, 36, 0.4)',
+                color: '#fbbf24',
+                fontWeight: 700,
+                fontSize: '0.78rem',
+                cursor: 'pointer'
+              }}
+              title="Explorar todos los artículos citantes de este corpus"
+            >
+              <Sparkles size={14} />
+              <span>Citantes del Corpus</span>
+            </button>
+
+            {/* Pagination Top Indicator */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
+                Pág. <strong>{tableData.page}</strong> / <strong>{tableData.total_pages}</strong>
+              </span>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  disabled={page <= 1 || loading}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid var(--border-color)',
+                    color: page <= 1 ? 'var(--text-muted)' : 'var(--text-main)',
+                    cursor: page <= 1 ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  disabled={page >= tableData.total_pages || loading}
+                  onClick={() => setPage(p => Math.min(tableData.total_pages, p + 1))}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid var(--border-color)',
+                    color: page >= tableData.total_pages ? 'var(--text-muted)' : 'var(--text-main)',
+                    cursor: page >= tableData.total_pages ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -449,6 +488,7 @@ export default function TablePreviewTab({
                       const val = row[col]
                       const isNumeric = typeof val === 'number'
                       const isNameCol = col === 'Name' || col.includes('Name') || col.includes('Title')
+                      const isCitationCol = col === 'Times Cited' || col === 'Citations' || col.toLowerCase().includes('times cited')
 
                       return (
                         <td
@@ -463,7 +503,35 @@ export default function TablePreviewTab({
                             borderRight: '1px solid rgba(255, 255, 255, 0.02)'
                           }}
                         >
-                          {formatCellValue(col, val)}
+                          {isCitationCol && isNumeric && val > 0 ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const entityName = row['Name'] || row['Title'] || row['Country'] || row['Source'] || ''
+                                handleOpenCitingModal(selectedTable, entityName)
+                              }}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                padding: '3px 9px',
+                                borderRadius: '12px',
+                                background: 'rgba(251, 191, 36, 0.12)',
+                                border: '1px solid rgba(251, 191, 36, 0.4)',
+                                color: '#fbbf24',
+                                fontWeight: 800,
+                                fontSize: '0.8rem',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease'
+                              }}
+                              title={`Explorar artículos citantes de ${row['Name'] || 'esta entidad'}`}
+                            >
+                              <span>{val.toLocaleString()}</span>
+                              <Sparkles size={11} />
+                            </button>
+                          ) : (
+                            formatCellValue(col, val)
+                          )}
                         </td>
                       )
                     })}
@@ -548,6 +616,17 @@ export default function TablePreviewTab({
           </div>
         )}
       </div>
+
+      {/* Citing Works Modal */}
+      <CitingWorksModal
+        isOpen={citingModalOpen}
+        onClose={() => setCitingModalOpen(false)}
+        packageName={selectedPackage}
+        entityType={selectedCitingEntity.type}
+        entityName={selectedCitingEntity.name}
+        onSendToCorpus={onSendToCorpus}
+        user={user}
+      />
     </div>
   )
 }

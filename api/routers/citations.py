@@ -37,13 +37,25 @@ def _check_auth(request: Request) -> str:
     return orcid
 
 
+def _normalize_openalex_id(raw_id: str) -> str:
+    """Normaliza cualquier identificador OpenAlex al formato canónico URI https://openalex.org/W..."""
+    if not raw_id:
+        return ""
+    s = str(raw_id).strip().rstrip('/')
+    suffix = s.split('/')[-1]
+    return f"https://openalex.org/{suffix}"
+
+
 def _extract_entity_work_ids(works: list, entity_type: str = None, entity_name: str = None) -> list:
     """
-    Filtra los IDs de las obras del corpus que corresponden a una entidad específica.
-    Si no se especifica entidad, devuelve los IDs de todo el corpus.
+    Filtra y normaliza los IDs de las obras del corpus que corresponden a una entidad específica.
+    Si no se especifica entidad o es 'all'/'corpus', devuelve todos los IDs del corpus normalizados.
     """
-    if not entity_type or not entity_name or entity_type.lower() in ('all', 'corpus', 'none'):
-        return [w['id'] for w in works if 'id' in w]
+    if not works:
+        return []
+
+    if not entity_type or not entity_name or entity_type.lower() in ('all', 'corpus', 'none', ''):
+        return list(dict.fromkeys([_normalize_openalex_id(w['id']) for w in works if w.get('id')]))
 
     entity_type = entity_type.lower()
     target_name = entity_name.strip().lower()
@@ -56,89 +68,146 @@ def _extract_entity_work_ids(works: list, entity_type: str = None, entity_name: 
 
         matched = False
 
-        if entity_type in ('organizations', 'organizations_colab', 'sector_types'):
-            # Instituciones directas y en authorships
-            inst_names = [i.get('display_name', '') for i in w.get('institutions', [])]
+        if entity_type in ('organizations', 'organizations_colab'):
+            inst_names = list(w.get('institution_names') or [])
+            if isinstance(inst_names, str):
+                inst_names = [inst_names]
+            for inst in w.get('institutions', []):
+                if isinstance(inst, dict) and inst.get('display_name'):
+                    inst_names.append(inst['display_name'])
             for auth in w.get('authorships', []):
-                for inst in auth.get('institutions', []):
-                    inst_names.append(inst.get('display_name', ''))
+                if isinstance(auth, dict):
+                    for inst in auth.get('institutions', []):
+                        if isinstance(inst, dict) and inst.get('display_name'):
+                            inst_names.append(inst['display_name'])
             if any(target_name in str(name).lower() for name in inst_names if name):
                 matched = True
 
+        elif entity_type in ('sector_types', 'sectors'):
+            sect_names = list(w.get('institution_types') or w.get('sector_types') or [])
+            if isinstance(sect_names, str):
+                sect_names = [sect_names]
+            if any(target_name in str(s).lower() for s in sect_names if s):
+                matched = True
+
         elif entity_type in ('researchers', 'authors'):
-            author_names = []
+            author_names = list(w.get('author_names') or [])
+            if isinstance(author_names, str):
+                author_names = [author_names]
             for auth in w.get('authorships', []):
-                author_obj = auth.get('author', {})
-                author_names.append(author_obj.get('display_name', ''))
-                author_names.append(auth.get('raw_author_name', ''))
+                if isinstance(auth, dict):
+                    author_obj = auth.get('author', {})
+                    if isinstance(author_obj, dict) and author_obj.get('display_name'):
+                        author_names.append(author_obj['display_name'])
+                    if auth.get('raw_author_name'):
+                        author_names.append(auth['raw_author_name'])
             if any(target_name in str(name).lower() for name in author_names if name):
                 matched = True
 
-        elif entity_type in ('locations', 'locations_subnational'):
-            countries = []
-            for auth in w.get('authorships', []):
-                countries.extend(auth.get('countries', []))
-            for inst in w.get('institutions', []):
-                countries.append(inst.get('country_code', ''))
+        elif entity_type in ('locations', 'countries'):
+            countries = list(w.get('country_codes') or w.get('all_country_codes') or w.get('countries') or [])
+            if isinstance(countries, str):
+                countries = [countries]
+            c_code = w.get('country_code')
+            if c_code:
+                countries.append(c_code)
             if any(target_name in str(c).lower() for c in countries if c):
                 matched = True
 
+        elif entity_type in ('locations_subnational', 'subnational'):
+            sub_locs = list(w.get('locations_subnational') or w.get('subnational') or [])
+            if isinstance(sub_locs, str):
+                sub_locs = [sub_locs]
+            if any(target_name in str(c).lower() for c in sub_locs if c):
+                matched = True
+
         elif entity_type in ('publication_sources', 'sources'):
-            source_name = ''
+            source_name = w.get('source_name') or ''
             prim_loc = w.get('primary_location') or {}
-            source_obj = prim_loc.get('source') or {}
-            source_name = source_obj.get('display_name', '')
+            if isinstance(prim_loc, dict):
+                source_obj = prim_loc.get('source') or {}
+                if isinstance(source_obj, dict) and source_obj.get('display_name'):
+                    source_name = source_obj['display_name']
             if target_name in str(source_name).lower():
                 matched = True
 
         elif entity_type in ('funding_agencies', 'funders'):
-            funder_names = []
+            funder_names = list(w.get('funder_names') or [])
+            if isinstance(funder_names, str):
+                funder_names = [funder_names]
             for grant in w.get('grants', []) or w.get('awards', []):
-                funder_names.append(grant.get('funder_display_name', ''))
+                if isinstance(grant, dict) and grant.get('funder_display_name'):
+                    funder_names.append(grant['funder_display_name'])
             for f in w.get('funders', []):
-                funder_names.append(f.get('display_name', ''))
+                if isinstance(f, dict) and f.get('display_name'):
+                    funder_names.append(f['display_name'])
             if any(target_name in str(fn).lower() for fn in funder_names if fn):
                 matched = True
 
-        elif entity_type in ('research_areas_macro_topics', 'domains'):
-            prim_topic = w.get('primary_topic') or {}
-            domain_name = (prim_topic.get('domain') or {}).get('display_name', '')
-            if target_name in str(domain_name).lower():
+        elif entity_type in ('research_areas_domain', 'research_areas_macro_topics', 'domains', 'domain'):
+            dom_name = str(w.get('domain') or w.get('domain_name') or '').strip().lower()
+            if target_name in dom_name:
                 matched = True
 
-        elif entity_type in ('research_areas_meso_topics', 'fields'):
-            prim_topic = w.get('primary_topic') or {}
-            field_name = (prim_topic.get('field') or {}).get('display_name', '')
-            if target_name in str(field_name).lower():
+        elif entity_type in ('research_areas_field', 'research_areas_meso_topics', 'fields', 'field'):
+            field_name = str(w.get('field') or w.get('field_name') or '').strip().lower()
+            if target_name in field_name:
                 matched = True
 
-        elif entity_type in ('research_areas_micro_topics', 'topics', 'subfields'):
-            subfield_name = (w.get('primary_topic') or {}).get('subfield', {}).get('display_name', '')
-            topic_names = [t.get('display_name', '') for t in w.get('topics', [])]
-            if (w.get('primary_topic') or {}).get('display_name'):
-                topic_names.append(w['primary_topic']['display_name'])
-            if target_name in str(subfield_name).lower() or any(target_name in str(tn).lower() for tn in topic_names if tn):
+        elif entity_type in ('research_areas_subfield', 'subfields', 'subfield', 'esi', 'research_areas_esi'):
+            subfield_name = str(w.get('subfield') or w.get('subfield_name') or '').strip().lower()
+            if target_name in subfield_name:
+                matched = True
+
+        elif entity_type in ('research_areas_topic', 'research_areas_micro_topics', 'topics', 'topic'):
+            topic_name = str(w.get('topic') or w.get('topic_name') or '').strip().lower()
+            topic_names = [topic_name] if topic_name else []
+            all_top = w.get('topics') or w.get('all_topics') or []
+            if isinstance(all_top, list):
+                for t in all_top:
+                    if isinstance(t, str):
+                        topic_names.append(t.lower())
+                    elif isinstance(t, dict) and t.get('display_name'):
+                        topic_names.append(str(t['display_name']).lower())
+            if any(target_name in tn for tn in topic_names if tn):
+                matched = True
+
+        elif entity_type in ('research_areas_sdg', 'sdg', 'sdgs'):
+            sdg_vals = list(w.get('sdgs') or w.get('sdg_ids') or w.get('sdg') or [])
+            if isinstance(sdg_vals, str):
+                sdg_vals = [sdg_vals]
+            if any(target_name in str(s).lower() for s in sdg_vals if s):
                 matched = True
 
         elif entity_type == 'concepts':
-            concept_names = [c.get('display_name', '') for c in w.get('concepts', [])]
-            if any(target_name in str(cn).lower() for cn in concept_names if cn):
-                matched = True
+            concepts = list(w.get('concepts') or [])
+            if isinstance(concepts, str):
+                concepts = [concepts]
+            for c in concepts:
+                c_name = c if isinstance(c, str) else (c.get('display_name') if isinstance(c, dict) else str(c))
+                if target_name in str(c_name).lower():
+                    matched = True
+                    break
 
         elif entity_type == 'keywords':
-            keyword_names = [k.get('display_name', '') or k.get('keyword', '') for k in w.get('keywords', [])]
-            if any(target_name in str(kn).lower() for kn in keyword_names if kn):
-                matched = True
+            keywords = list(w.get('keywords') or [])
+            if isinstance(keywords, str):
+                keywords = [keywords]
+            for k in keywords:
+                k_name = k if isinstance(k, str) else (k.get('display_name') or k.get('keyword') if isinstance(k, dict) else str(k))
+                if target_name in str(k_name).lower():
+                    matched = True
+                    break
 
         else:
-            # Fallback a coincidencia en todo el string del objeto de trabajo
-            if target_name in json.dumps(w).lower():
+            # Fallback general sobre el JSON serializado
+            if target_name in json.dumps(w, ensure_ascii=False).lower():
                 matched = True
 
         if matched:
-            matching_ids.append(wid)
+            matching_ids.append(_normalize_openalex_id(wid))
 
-    return matching_ids
+    return list(dict.fromkeys(matching_ids))
 
 
 async def get_citing_works_endpoint(request: Request):
@@ -163,7 +232,7 @@ async def get_citing_works_endpoint(request: Request):
     if not target_dir.exists():
         return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
 
-    # 1. Cargar obras del corpus desde JSON o fallback
+    # 1. Cargar obras del corpus desde JSON
     json_path = target_dir / f"{package_name}_openalex_works.json"
     corpus_works = []
     if json_path.exists():
@@ -173,14 +242,10 @@ async def get_citing_works_endpoint(request: Request):
         except Exception as e:
             logger.warning(f"No se pudo leer JSON del corpus {package_name}: {e}")
 
-    # Si no hay JSON, extraer IDs desde ClickHouse o Parquets
-    client = _get_ch_client()
+    if not corpus_works:
+        return JSONResponse({'error': f"Dataset de obras no encontrado para el paquete '{package_name}'."}, status_code=404)
 
-    if corpus_works:
-        cited_work_ids = _extract_entity_work_ids(corpus_works, entity_type, entity_name)
-    else:
-        # Fallback: consultar IDs citados directamente en ClickHouse
-        cited_work_ids = []
+    cited_work_ids = _extract_entity_work_ids(corpus_works, entity_type, entity_name)
 
     if not cited_work_ids:
         return JSONResponse({
@@ -198,6 +263,7 @@ async def get_citing_works_endpoint(request: Request):
         })
 
     # 2. Consultar citantes en rag.work_citations en lotes (Sin JOINs)
+    client = _get_ch_client()
     BATCH_SIZE = 2000
     citing_edges = []
     
@@ -231,7 +297,6 @@ async def get_citing_works_endpoint(request: Request):
         })
 
     # 3. Consultar metadatos en rag.works_flat para los citantes únicos
-    # Para optimizar ordenamiento y búsqueda, traemos los campos clave
     META_BATCH_SIZE = 2000
     citing_metadata = []
     
@@ -266,14 +331,14 @@ async def get_citing_works_endpoint(request: Request):
                 'subfield_name': r[14] or ''
             })
 
-    # 4. Filtrar por búsqueda si aplica
+    # 4. Filtrar por búsqueda textual si aplica
     if search_q:
         sq = search_q.lower()
         citing_metadata = [
             w for w in citing_metadata
             if sq in w['title'].lower()
-            or any(sq in a.lower() for a in w['author_names'])
-            or any(sq in inst.lower() for inst in w['institution_names'])
+            or any(sq in str(a).lower() for a in w['author_names'])
+            or any(sq in str(inst).lower() for inst in w['institution_names'])
             or sq in w['field_name'].lower()
             or sq in w['doi'].lower()
         ]

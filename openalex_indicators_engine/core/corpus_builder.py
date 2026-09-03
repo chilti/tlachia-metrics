@@ -278,11 +278,53 @@ class CorpusBuilder:
             clean_q = str(query).strip().replace("'", "\\'")
             clauses.append(f"positionCaseInsensitiveUTF8(title, '{clean_q}') > 0")
 
-        # Tópicos (Múltiples con OR / AND)
-        t_ids = filters.get('topic_ids') or []
+        # Dominios (Taxonomía Nivel 1)
+        d_vals = filters.get('domain_ids') or filters.get('domains') or []
+        if isinstance(d_vals, str):
+            d_vals = [d.strip() for d in d_vals.split(',') if d.strip()]
+        single_d = filters.get('domain') or filters.get('domain_id')
+        if single_d and single_d not in d_vals:
+            d_vals.append(single_d)
+
+        d_vals = [str(d).replace("'", "\\'").strip() for d in d_vals if str(d).strip()]
+        if d_vals:
+            quoted_d = ", ".join(f"'{d}'" for d in d_vals)
+            quoted_d_urls = ", ".join(f"'https://openalex.org/domains/{d.split('/')[-1]}'" for d in d_vals)
+            clauses.append(f"(domain_name IN ({quoted_d}) OR domain IN ({quoted_d}) OR domain_id IN ({quoted_d}) OR domain_id IN ({quoted_d_urls}))")
+
+        # Campos (Taxonomía Nivel 2)
+        f_vals = filters.get('field_ids') or filters.get('fields') or []
+        if isinstance(f_vals, str):
+            f_vals = [f.strip() for f in f_vals.split(',') if f.strip()]
+        single_f = filters.get('field') or filters.get('field_id')
+        if single_f and single_f not in f_vals:
+            f_vals.append(single_f)
+
+        f_vals = [str(f).replace("'", "\\'").strip() for f in f_vals if str(f).strip()]
+        if f_vals:
+            quoted_f = ", ".join(f"'{f}'" for f in f_vals)
+            quoted_f_urls = ", ".join(f"'https://openalex.org/fields/{f.split('/')[-1]}'" for f in f_vals)
+            clauses.append(f"(field_name IN ({quoted_f}) OR field IN ({quoted_f}) OR field_id IN ({quoted_f}) OR field_id IN ({quoted_f_urls}))")
+
+        # Subcampos (Taxonomía Nivel 3)
+        sf_vals = filters.get('subfield_ids') or filters.get('subfields') or []
+        if isinstance(sf_vals, str):
+            sf_vals = [sf.strip() for sf in sf_vals.split(',') if sf.strip()]
+        single_sf = filters.get('subfield') or filters.get('subfield_id')
+        if single_sf and single_sf not in sf_vals:
+            sf_vals.append(single_sf)
+
+        sf_vals = [str(sf).replace("'", "\\'").strip() for sf in sf_vals if str(sf).strip()]
+        if sf_vals:
+            quoted_sf = ", ".join(f"'{sf}'" for sf in sf_vals)
+            quoted_sf_urls = ", ".join(f"'https://openalex.org/subfields/{sf.split('/')[-1]}'" for sf in sf_vals)
+            clauses.append(f"(subfield_name IN ({quoted_sf}) OR subfield IN ({quoted_sf}) OR subfield_id IN ({quoted_sf}) OR subfield_id IN ({quoted_sf_urls}))")
+
+        # Tópicos (Taxonomía Nivel 4 - Múltiples con OR / AND)
+        t_ids = filters.get('topic_ids') or filters.get('topics') or []
         if isinstance(t_ids, str):
             t_ids = [t.strip() for t in t_ids.split(',') if t.strip()]
-        single_topic = filters.get('topic_id')
+        single_topic = filters.get('topic_id') or filters.get('topic')
         if single_topic and single_topic not in t_ids:
             t_ids.append(single_topic)
 
@@ -290,12 +332,12 @@ class CorpusBuilder:
         if t_ids:
             t_logic = str(filters.get('topic_logic', 'OR')).strip().upper()
             if t_logic == 'AND':
-                and_clauses = [f"(topic_id = '{t}' OR topic_id = 'https://openalex.org/{t}' OR primary_topic_id = '{t}' OR primary_topic_id = 'https://openalex.org/{t}' OR has(all_topics, '{t}') OR has(all_topics, 'https://openalex.org/{t}'))" for t in t_ids]
+                and_clauses = [f"(topic_id = '{t}' OR topic_id = 'https://openalex.org/{t}' OR primary_topic_id = '{t}' OR primary_topic_id = 'https://openalex.org/{t}' OR has(all_topics, '{t}') OR has(all_topics, 'https://openalex.org/{t}') OR topic = '{t}')" for t in t_ids]
                 clauses.append(f"({' AND '.join(and_clauses)})")
             else:
                 quoted = ", ".join(f"'{t}'" for t in t_ids)
                 quoted_urls = ", ".join(f"'https://openalex.org/{t}'" for t in t_ids)
-                clauses.append(f"(topic_id IN ({quoted}) OR topic_id IN ({quoted_urls}) OR primary_topic_id IN ({quoted}) OR primary_topic_id IN ({quoted_urls}) OR hasAny(all_topics, [{quoted}]) OR hasAny(all_topics, [{quoted_urls}]))")
+                clauses.append(f"(topic_id IN ({quoted}) OR topic_id IN ({quoted_urls}) OR primary_topic_id IN ({quoted}) OR primary_topic_id IN ({quoted_urls}) OR hasAny(all_topics, [{quoted}]) OR hasAny(all_topics, [{quoted_urls}]) OR topic IN ({quoted}))")
 
         # Revistas / Fuentes (Múltiples con OR)
         s_ids = filters.get('source_ids') or []

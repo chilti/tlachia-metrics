@@ -1,0 +1,553 @@
+import React, { useState, useEffect } from 'react'
+import axios from 'axios'
+import {
+  Table as TableIcon,
+  Layers,
+  Calendar,
+  Search,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  FileSpreadsheet,
+  RefreshCw,
+  Loader2,
+  AlertCircle,
+  FolderArchive,
+  ChevronLeft,
+  ChevronRight,
+  Sparkles,
+  ExternalLink,
+  Eye
+} from 'lucide-react'
+
+const TABLE_OPTIONS = [
+  { id: 'organizations', name: 'Organizations (Instituciones)', icon: '🏢' },
+  { id: 'locations', name: 'Locations (Países)', icon: '🌐' },
+  { id: 'locations_subnational', name: 'Locations Subnational (Estados)', icon: '🗺️' },
+  { id: 'organizations_colab', name: 'Organizations Colab (Co-afiliaciones)', icon: '🤝' },
+  { id: 'sector_types', name: 'Sector Types (Sectores)', icon: '🏭' },
+  { id: 'researchers', name: 'Researchers (Investigadores)', icon: '👥' },
+  { id: 'publication_sources', name: 'Publication Sources (Revistas)', icon: '📚' },
+  { id: 'funding_agencies', name: 'Funding Agencies (Financiamiento)', icon: '🏛️' },
+  { id: 'research_areas_macro_topics', name: 'Domains (Dominios)', icon: '🧭' },
+  { id: 'research_areas_meso_topics', name: 'Fields (Campos)', icon: '🔬' },
+  { id: 'research_areas_micro_topics', name: 'Subfields / Topics (Subcampos)', icon: '🔍' },
+  { id: 'research_areas_esi', name: 'Research Areas ESI', icon: '🌟' },
+  { id: 'research_areas_sdg', name: 'Research Areas SDG (ODS)', icon: '🎯' },
+  { id: 'concepts', name: 'Concepts (Conceptos)', icon: '💡' },
+  { id: 'keywords', name: 'Keywords (Palabras Clave)', icon: '🏷️' },
+  { id: 'economic_apc_breakdown', name: 'Economic APC Breakdown (Costos APC)', icon: '💰' }
+]
+
+const PERIOD_OPTIONS = [
+  { id: 'full', label: 'Histórico Completo' },
+  { id: 'recent', label: 'Reciente (2021-2025)' },
+  { id: 'trend', label: 'Tendencia Anual' }
+]
+
+export default function TablePreviewTab({
+  packages = [],
+  initialPackage = null,
+  onOpenDownloads
+}) {
+  const [selectedPackage, setSelectedPackage] = useState(() => {
+    if (initialPackage) return initialPackage
+    return packages.length > 0 ? packages[0].name : ''
+  })
+  const [selectedTable, setSelectedTable] = useState('organizations')
+  const [selectedPeriod, setSelectedPeriod] = useState('full')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortBy, setSortBy] = useState('')
+  const [sortOrder, setSortOrder] = useState('desc')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [tableData, setTableData] = useState({
+    columns: [],
+    data: [],
+    total_rows: 0,
+    total_pages: 1
+  })
+
+  // Sync initialPackage if changed
+  useEffect(() => {
+    if (initialPackage) {
+      setSelectedPackage(initialPackage)
+    } else if (!selectedPackage && packages.length > 0) {
+      setSelectedPackage(packages[0].name)
+    }
+  }, [initialPackage, packages])
+
+  // Fetch Table Data
+  useEffect(() => {
+    if (!selectedPackage) return
+
+    setLoading(true)
+    setError(null)
+
+    const params = {
+      table: selectedTable,
+      period: selectedPeriod,
+      page: page,
+      limit: pageSize,
+      sort_by: sortBy,
+      sort_order: sortOrder,
+      q: searchQuery
+    }
+
+    axios.get(`/api/indicators/table-preview/${selectedPackage}`, { params })
+      .then(res => {
+        setTableData(res.data)
+        setLoading(false)
+      })
+      .catch(err => {
+        console.error('Error fetching table preview:', err)
+        setError(err.response?.data?.error || 'No se pudo cargar la vista previa de la tabla seleccionada.')
+        setLoading(false)
+      })
+  }, [selectedPackage, selectedTable, selectedPeriod, page, pageSize, sortBy, sortOrder, searchQuery])
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(column)
+      setSortOrder('desc')
+    }
+    setPage(1)
+  }
+
+  const handleExportCSV = () => {
+    if (!tableData.data || tableData.data.length === 0) return
+    const cols = tableData.columns
+    const csvRows = [cols.join(',')]
+    tableData.data.forEach(row => {
+      const values = cols.map(c => {
+        const val = row[c] === null || row[c] === undefined ? '' : String(row[c])
+        return `"${val.replace(/"/g, '""')}"`
+      })
+      csvRows.push(values.join(','))
+    })
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `${selectedPackage}_${selectedTable}_${selectedPeriod}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const formatCellValue = (col, val) => {
+    if (val === null || val === undefined) return '-'
+    if (typeof val === 'number') {
+      if (col.startsWith('%') || col.includes('Percent') || col.includes('Rate')) {
+        return `${val.toFixed(1)}%`
+      }
+      if (col.includes('USD') || col.includes('APC') || col.includes('Savings')) {
+        return `$${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+      }
+      if (Number.isInteger(val)) {
+        return val.toLocaleString()
+      }
+      return val.toFixed(2)
+    }
+    return String(val)
+  }
+
+  if (packages.length === 0) {
+    return (
+      <div className="card-panel" style={{ padding: '60px 20px', textAlign: 'center' }}>
+        <FolderArchive size={48} color="var(--accent-primary)" style={{ margin: '0 auto 16px', opacity: 0.6 }} />
+        <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px' }}>
+          No hay paquetes calculados aún
+        </h3>
+        <p style={{ color: 'var(--text-dim)', fontSize: '0.9rem', maxWidth: '450px', margin: '0 auto 20px' }}>
+          Conforma un corpus en la primera pestaña y presiona "Calcular 48 Indicadores" para explorar interactivamente todas las tablas de entidades.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Top Controls Bar */}
+      <div className="card-panel" style={{ padding: '18px 24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', alignItems: 'center' }}>
+          
+          {/* Package Selector */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
+              📦 Paquete de Indicadores
+            </label>
+            <select
+              value={selectedPackage}
+              onChange={(e) => {
+                setSelectedPackage(e.target.value)
+                setPage(1)
+              }}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                borderRadius: '10px',
+                background: 'rgba(0, 0, 0, 0.25)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-main)',
+                fontSize: '0.9rem',
+                fontWeight: 600
+              }}
+            >
+              {packages.map(pkg => (
+                <option key={pkg.name} value={pkg.name} style={{ background: '#1e293b' }}>
+                  {pkg.name} ({pkg.total_works?.toLocaleString() || 0} obras)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Table Entity Selector (Combo) */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
+              📊 Entidad / Tabla (16 Disponibles)
+            </label>
+            <select
+              value={selectedTable}
+              onChange={(e) => {
+                setSelectedTable(e.target.value)
+                setPage(1)
+                setSortBy('')
+              }}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                borderRadius: '10px',
+                background: 'rgba(0, 0, 0, 0.25)',
+                border: '1px solid var(--accent-primary)',
+                color: 'var(--text-main)',
+                fontSize: '0.9rem',
+                fontWeight: 700
+              }}
+            >
+              {TABLE_OPTIONS.map(tab => (
+                <option key={tab.id} value={tab.id} style={{ background: '#1e293b' }}>
+                  {tab.icon} {tab.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Period Selector Pills */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
+              ⏳ Temporalidad
+            </label>
+            <div style={{ display: 'flex', background: 'rgba(0, 0, 0, 0.25)', borderRadius: '10px', padding: '3px', border: '1px solid var(--border-color)' }}>
+              {PERIOD_OPTIONS.map(per => {
+                const active = selectedPeriod === per.id
+                return (
+                  <button
+                    key={per.id}
+                    onClick={() => {
+                      setSelectedPeriod(per.id)
+                      setPage(1)
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '7px 8px',
+                      borderRadius: '7px',
+                      border: 'none',
+                      background: active ? 'var(--accent-primary)' : 'transparent',
+                      color: active ? '#0f172a' : 'var(--text-dim)',
+                      fontWeight: active ? 800 : 500,
+                      fontSize: '0.78rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    {per.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Table Search & Export */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
+              🔍 Filtro Rápido en Tabla
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <Search size={16} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '12px' }} />
+                <input
+                  type="text"
+                  placeholder="Buscar en filas..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value)
+                    setPage(1)
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px 9px 36px',
+                    borderRadius: '10px',
+                    background: 'rgba(0, 0, 0, 0.25)',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.85rem'
+                  }}
+                />
+              </div>
+              <button
+                onClick={handleExportCSV}
+                title="Exportar vista a CSV"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '9px 14px',
+                  borderRadius: '10px',
+                  background: 'rgba(56, 189, 248, 0.15)',
+                  border: '1px solid var(--accent-primary)',
+                  color: 'var(--accent-primary)',
+                  fontWeight: 700,
+                  fontSize: '0.85rem',
+                  cursor: 'pointer'
+                }}
+              >
+                <Download size={15} />
+                <span>CSV</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* Main Table View */}
+      <div className="card-panel" style={{ padding: '0', overflow: 'hidden' }}>
+        {/* Header Summary */}
+        <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '1.25rem' }}>
+              {TABLE_OPTIONS.find(t => t.id === selectedTable)?.icon || '📊'}
+            </span>
+            <div>
+              <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
+                {TABLE_OPTIONS.find(t => t.id === selectedTable)?.name || selectedTable}
+              </h3>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', margin: 0 }}>
+                {selectedPeriod === 'full' ? 'Periodo Completo' : (selectedPeriod === 'recent' ? 'Quinquenio Reciente 2021-2025' : 'Tendencia Anual')} • {tableData.total_rows.toLocaleString()} registros encontrados
+              </p>
+            </div>
+          </div>
+
+          {/* Pagination Top Indicator */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
+              Página <strong>{tableData.page}</strong> de <strong>{tableData.total_pages}</strong>
+            </span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                disabled={page <= 1 || loading}
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: '6px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-color)',
+                  color: page <= 1 ? 'var(--text-muted)' : 'var(--text-main)',
+                  cursor: page <= 1 ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <button
+                disabled={page >= tableData.total_pages || loading}
+                onClick={() => setPage(p => Math.min(tableData.total_pages, p + 1))}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: '6px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-color)',
+                  color: page >= tableData.total_pages ? 'var(--text-muted)' : 'var(--text-main)',
+                  cursor: page >= tableData.total_pages ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Loading / Error States */}
+        {loading && (
+          <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--accent-primary)' }}>
+            <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 12px' }} />
+            <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>Cargando datos de la tabla...</p>
+          </div>
+        )}
+
+        {error && !loading && (
+          <div style={{ padding: '40px 20px', textAlign: 'center', color: '#f87171' }}>
+            <AlertCircle size={32} style={{ margin: '0 auto 12px' }} />
+            <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>{error}</p>
+          </div>
+        )}
+
+        {/* Data Table */}
+        {!loading && !error && tableData.data && (
+          <div style={{ overflowX: 'auto', maxHeight: '600px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+              <thead style={{ position: 'sticky', top: 0, background: '#1e293b', zIndex: 10, borderBottom: '2px solid var(--border-color)' }}>
+                <tr>
+                  {tableData.columns.map((col, idx) => {
+                    const isSorted = sortBy === col
+                    return (
+                      <th
+                        key={idx}
+                        onClick={() => handleSort(col)}
+                        style={{
+                          padding: '12px 14px',
+                          color: isSorted ? 'var(--accent-primary)' : 'var(--text-main)',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                          userSelect: 'none',
+                          borderRight: '1px solid rgba(255, 255, 255, 0.05)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: typeof tableData.data[0]?.[col] === 'number' ? 'flex-end' : 'flex-start' }}>
+                          <span>{col}</span>
+                          {isSorted ? (
+                            sortOrder === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />
+                          ) : (
+                            <ArrowUpDown size={12} style={{ opacity: 0.3 }} />
+                          )}
+                        </div>
+                      </th>
+                    )
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {tableData.data.map((row, rowIdx) => (
+                  <tr
+                    key={rowIdx}
+                    style={{
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+                      background: rowIdx % 2 === 0 ? 'rgba(255, 255, 255, 0.01)' : 'transparent',
+                      transition: 'background 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(56, 189, 248, 0.06)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = rowIdx % 2 === 0 ? 'rgba(255, 255, 255, 0.01)' : 'transparent'}
+                  >
+                    {tableData.columns.map((col, colIdx) => {
+                      const val = row[col]
+                      const isNumeric = typeof val === 'number'
+                      const isNameCol = col === 'Name' || col.includes('Name') || col.includes('Title')
+
+                      return (
+                        <td
+                          key={colIdx}
+                          style={{
+                            padding: '10px 14px',
+                            color: isNameCol ? 'var(--text-main)' : 'var(--text-dim)',
+                            fontWeight: isNameCol ? 600 : 400,
+                            textAlign: isNumeric ? 'right' : 'left',
+                            whiteSpace: isNameCol ? 'normal' : 'nowrap',
+                            maxWidth: isNameCol ? '280px' : 'none',
+                            borderRight: '1px solid rgba(255, 255, 255, 0.02)'
+                          }}
+                        >
+                          {formatCellValue(col, val)}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Bottom Pagination Bar */}
+        {!loading && !error && tableData.total_pages > 1 && (
+          <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 0, 0, 0.15)' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
+              Mostrando registros <strong>{((page - 1) * pageSize) + 1}</strong> a <strong>{Math.min(page * pageSize, tableData.total_rows)}</strong> de <strong>{tableData.total_rows.toLocaleString()}</strong>
+            </span>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage(1)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-color)',
+                  color: page <= 1 ? 'var(--text-muted)' : 'var(--text-main)',
+                  fontSize: '0.8rem',
+                  cursor: page <= 1 ? 'not-allowed' : 'pointer'
+                }}
+              >
+                Primera
+              </button>
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-color)',
+                  color: page <= 1 ? 'var(--text-muted)' : 'var(--text-main)',
+                  fontSize: '0.8rem',
+                  cursor: page <= 1 ? 'not-allowed' : 'pointer'
+                }}
+              >
+                Anterior
+              </button>
+              <span style={{ display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: '0.8rem', fontWeight: 700 }}>
+                {page} / {tableData.total_pages}
+              </span>
+              <button
+                disabled={page >= tableData.total_pages}
+                onClick={() => setPage(p => Math.min(tableData.total_pages, p + 1))}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-color)',
+                  color: page >= tableData.total_pages ? 'var(--text-muted)' : 'var(--text-main)',
+                  fontSize: '0.8rem',
+                  cursor: page >= tableData.total_pages ? 'not-allowed' : 'pointer'
+                }}
+              >
+                Siguiente
+              </button>
+              <button
+                disabled={page >= tableData.total_pages}
+                onClick={() => setPage(tableData.total_pages)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-color)',
+                  color: page >= tableData.total_pages ? 'var(--text-muted)' : 'var(--text-main)',
+                  fontSize: '0.8rem',
+                  cursor: page >= tableData.total_pages ? 'not-allowed' : 'pointer'
+                }}
+              >
+                Última
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

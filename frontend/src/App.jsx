@@ -39,11 +39,13 @@ import {
   KeyRound
 } from 'lucide-react'
 import OrcidLoginModal from './components/OrcidLoginModal'
+import TablePreviewTab from './components/TablePreviewTab'
+import CorpusManagerModal from './components/CorpusManagerModal'
 
 const API_BASE = ''
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('builder') // 'builder' | 'downloads'
+  const [activeTab, setActiveTab] = useState('builder') // 'builder' | 'tables' | 'downloads'
   const [searchMode, setSearchMode] = useState('filters') // 'filters' | 'ids' | 'upload'
 
   // User & ORCID Authentication State
@@ -59,8 +61,18 @@ export default function App() {
   const [loginModalReason, setLoginModalReason] = useState('general')
   const [unauthorizedError, setUnauthorizedError] = useState(null)
 
+  // Corpus Manager State
+  const [corpusManagerModalOpen, setCorpusManagerModalOpen] = useState(false)
+  const [corpusManagerMode, setCorpusManagerMode] = useState('list') // 'list' | 'save'
+
+  // Table Preview State
+  const [selectedPackageForTablePreview, setSelectedPackageForTablePreview] = useState(null)
+
   // Filters State (Cumulative Multiselect)
   const [query, setQuery] = useState('')
+  const [selectedDomains, setSelectedDomains] = useState([])
+  const [selectedFields, setSelectedFields] = useState([])
+  const [selectedSubfields, setSelectedSubfields] = useState([])
   const [selectedTopics, setSelectedTopics] = useState([])
   const [topicLogic, setTopicLogic] = useState('OR')
   const [selectedSources, setSelectedSources] = useState([])
@@ -191,6 +203,66 @@ export default function App() {
     setEntityResults([])
   }
 
+  // Reset Corpus Parameters
+  const handleResetCorpus = () => {
+    setQuery('')
+    setSelectedDomains([])
+    setSelectedFields([])
+    setSelectedSubfields([])
+    setSelectedTopics([])
+    setSelectedSources([])
+    setSelectedInstitutions([])
+    setSelectedAuthors([])
+    setSelectedCountries([])
+    setSelectedTypes([])
+    setStartYear(2015)
+    setEndYear(2026)
+    setAllYears(false)
+    setOaStatus('all')
+    setIdsText('')
+    setUploadedFile(null)
+    setUploadResult(null)
+    setHasSearched(false)
+    setPreviewData({ total: 0, results: [], page: 1, total_pages: 1 })
+    setPackageName('Mi_Corpus_TlachIA')
+  }
+
+  // Load Saved Corpus from Corpus Manager
+  const handleLoadSavedCorpus = (corpus) => {
+    if (!corpus) return
+    setPackageName(corpus.corpus_name || 'Mi_Corpus_TlachIA')
+    const mode = corpus.source_mode || 'filters'
+    setSearchMode(mode)
+
+    if (mode === 'ids') {
+      setIdsText((corpus.ids_list || []).join('\n'))
+    } else if (mode === 'filters') {
+      const f = corpus.filters || {}
+      setQuery(f.query || '')
+      setStartYear(f.start_year || 2015)
+      setEndYear(f.end_year || 2026)
+      setOaStatus(f.oa_status || 'all')
+
+      // Taxonomía
+      setSelectedDomains((f.domain_names || f.domains || []).map(d => typeof d === 'object' ? d : { id: d, name: d, domain_name: d }))
+      setSelectedFields((f.field_names || f.fields || []).map(d => typeof d === 'object' ? d : { id: d, name: d, field_name: d }))
+      setSelectedSubfields((f.subfield_names || f.subfields || []).map(d => typeof d === 'object' ? d : { id: d, name: d, subfield_name: d }))
+      setSelectedTopics((f.topic_ids || f.topics || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
+
+      // Entidades
+      setSelectedSources((f.source_ids || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
+      setSelectedInstitutions((f.institution_ids || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
+      setSelectedAuthors((f.author_ids || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
+      setSelectedCountries((f.country_codes || []).map(d => typeof d === 'object' ? d : { code: d, name: d }))
+      setSelectedTypes((f.work_types || []).map(d => typeof d === 'object' ? d : { id: d, name: d }))
+    }
+
+    setHasSearched(true)
+    setTimeout(() => {
+      fetchPreview(1)
+    }, 150)
+  }
+
   // Fetch Preview Works from Filters
   const fetchPreview = async (page = 1) => {
     if (!user) return
@@ -199,6 +271,12 @@ export default function App() {
       const offset = (page - 1) * pageSize
       const payload = {
         query,
+        domain_names: selectedDomains.map(d => d.domain_name || d.name),
+        domain_ids: selectedDomains.map(d => d.id),
+        field_names: selectedFields.map(f => f.field_name || f.name),
+        field_ids: selectedFields.map(f => f.id),
+        subfield_names: selectedSubfields.map(sf => sf.subfield_name || sf.name),
+        subfield_ids: selectedSubfields.map(sf => sf.id),
         topic_ids: selectedTopics.map(t => t.id),
         topic_logic: topicLogic,
         source_ids: selectedSources.map(s => s.id),
@@ -311,6 +389,9 @@ export default function App() {
       setIsSearchingEntity(true)
       try {
         const typeMap = {
+          domain: 'domains',
+          field: 'fields',
+          subfield: 'subfields',
           topic: 'topics',
           source: 'sources',
           institution: 'institutions',
@@ -319,7 +400,7 @@ export default function App() {
           work_type: 'work_types'
         }
         const res = await axios.get('/api/entities/search', {
-          params: { type: typeMap[modalEntity], q: entitySearchQuery, limit: 20 }
+          params: { type: typeMap[modalEntity] || modalEntity, q: entitySearchQuery, limit: 25 }
         })
         setEntityResults(res.data.results || [])
       } catch (err) {
@@ -334,13 +415,19 @@ export default function App() {
       } finally {
         setIsSearchingEntity(false)
       }
-    }, 250)
+    }, 200)
     return () => clearTimeout(timer)
   }, [modalEntity, entitySearchQuery, user])
 
   // Select Entity from Modal
   const handleSelectEntity = (item) => {
-    if (modalEntity === 'topic') {
+    if (modalEntity === 'domain') {
+      setSelectedDomains(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
+    } else if (modalEntity === 'field') {
+      setSelectedFields(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
+    } else if (modalEntity === 'subfield') {
+      setSelectedSubfields(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
+    } else if (modalEntity === 'topic') {
       setSelectedTopics(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
     } else if (modalEntity === 'source') {
       setSelectedSources(prev => prev.some(x => x.id === item.id) ? prev : [...prev, item])
@@ -376,6 +463,12 @@ export default function App() {
     if (searchMode === 'filters') {
       payload.filters = {
         query,
+        domain_names: selectedDomains.map(d => d.domain_name || d.name),
+        domain_ids: selectedDomains.map(d => d.id),
+        field_names: selectedFields.map(f => f.field_name || f.name),
+        field_ids: selectedFields.map(f => f.id),
+        subfield_names: selectedSubfields.map(sf => sf.subfield_name || sf.name),
+        subfield_ids: selectedSubfields.map(sf => sf.id),
         topic_ids: selectedTopics.map(t => t.id),
         topic_logic: topicLogic,
         source_ids: selectedSources.map(s => s.id),
@@ -513,6 +606,13 @@ export default function App() {
               Conformador de Corpus
             </button>
             <button
+              className={`nav-tab ${activeTab === 'tables' ? 'active' : ''}`}
+              onClick={() => setActiveTab('tables')}
+            >
+              <FileSpreadsheet size={16} />
+              Vista de Tablas
+            </button>
+            <button
               className={`nav-tab ${activeTab === 'downloads' ? 'active' : ''}`}
               onClick={() => setActiveTab('downloads')}
             >
@@ -637,7 +737,15 @@ export default function App() {
 
       {/* Main Body */}
       <main className="container" style={{ flex: 1 }}>
-        {activeTab === 'builder' ? (
+        {activeTab === 'tables' ? (
+          <div style={{ marginTop: '24px', marginBottom: '48px' }}>
+            <TablePreviewTab
+              packages={packages}
+              initialPackage={selectedPackageForTablePreview}
+              onOpenDownloads={() => setActiveTab('downloads')}
+            />
+          </div>
+        ) : activeTab === 'builder' ? (
           <div className="main-layout">
             {/* Sidebar Filters */}
             <aside className="glass-panel filters-sidebar">
@@ -646,23 +754,48 @@ export default function App() {
                   <SlidersHorizontal size={18} color="var(--accent-primary)" />
                   Filtros del Corpus
                 </span>
-                <button
-                  className="btn-outline"
-                  style={{ padding: '4px 8px', fontSize: '0.75rem', borderRadius: '4px' }}
-                  onClick={() => {
-                    setQuery('')
-                    setSelectedTopic(null)
-                    setSelectedSource(null)
-                    setSelectedInstitution(null)
-                    setSelectedAuthor(null)
-                    setStartYear(2015)
-                    setEndYear(2026)
-                    setOaStatus('all')
-                    setCountryCode('')
-                  }}
-                >
-                  Limpiar
-                </button>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    className="btn-outline"
+                    style={{ padding: '4px 7px', fontSize: '0.72rem', borderRadius: '6px' }}
+                    onClick={() => {
+                      if (!user) {
+                        setLoginModalReason('filters')
+                        setLoginModalOpen(true)
+                        return
+                      }
+                      setCorpusManagerMode('save')
+                      setCorpusManagerModalOpen(true)
+                    }}
+                    title="Guardar este corpus"
+                  >
+                    💾 Guardar
+                  </button>
+                  <button
+                    className="btn-outline"
+                    style={{ padding: '4px 7px', fontSize: '0.72rem', borderRadius: '6px' }}
+                    onClick={() => {
+                      if (!user) {
+                        setLoginModalReason('filters')
+                        setLoginModalOpen(true)
+                        return
+                      }
+                      setCorpusManagerMode('list')
+                      setCorpusManagerModalOpen(true)
+                    }}
+                    title="Mis corpus guardados"
+                  >
+                    📂 Mis Corpus
+                  </button>
+                  <button
+                    className="btn-outline"
+                    style={{ padding: '4px 7px', fontSize: '0.72rem', borderRadius: '6px' }}
+                    onClick={handleResetCorpus}
+                    title="Limpiar filtros y crear nuevo corpus"
+                  >
+                    ✨ Nuevo
+                  </button>
+                </div>
               </div>
 
               {/* Search Mode Selector */}
@@ -721,9 +854,75 @@ export default function App() {
                 <>
                   {/* Entity Chips Selectors */}
                   <div className="filter-group">
-                    <label className="filter-label">Entidades Específicas</label>
+                    <label className="filter-label">Taxonomía y Clasificación (4 Niveles)</label>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {/* Topics */}
+                      {/* 1. Domains */}
+                      <div>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                          onClick={() => openEntityModal('domain')}
+                        >
+                          <Compass size={16} color="#38bdf8" />
+                          🌐 + Dominio ({selectedDomains.length})
+                        </button>
+                        {selectedDomains.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {selectedDomains.map(d => (
+                              <span key={d.id} className="chip" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                {d.name || d.domain_name}
+                                <button className="chip-remove" onClick={() => setSelectedDomains(prev => prev.filter(x => x.id !== d.id))}><X size={10} /></button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 2. Fields */}
+                      <div>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                          onClick={() => openEntityModal('field')}
+                        >
+                          <Compass size={16} color="#818cf8" />
+                          🔬 + Campo ({selectedFields.length})
+                        </button>
+                        {selectedFields.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {selectedFields.map(f => (
+                              <span key={f.id} className="chip" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                {f.name || f.field_name}
+                                <button className="chip-remove" onClick={() => setSelectedFields(prev => prev.filter(x => x.id !== f.id))}><X size={10} /></button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3. Subfields */}
+                      <div>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
+                          onClick={() => openEntityModal('subfield')}
+                        >
+                          <Compass size={16} color="#c084fc" />
+                          🔍 + Subcampo ({selectedSubfields.length})
+                        </button>
+                        {selectedSubfields.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {selectedSubfields.map(sf => (
+                              <span key={sf.id} className="chip" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                {sf.name || sf.subfield_name}
+                                <button className="chip-remove" onClick={() => setSelectedSubfields(prev => prev.filter(x => x.id !== sf.id))}><X size={10} /></button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 4. Topics */}
                       <div>
                         <button
                           className="btn btn-secondary"
@@ -731,7 +930,7 @@ export default function App() {
                           onClick={() => openEntityModal('topic')}
                         >
                           <Compass size={16} color="var(--accent-primary)" />
-                          + Filtrar por Tópico ({selectedTopics.length})
+                          🏷️ + Tópico ({selectedTopics.length})
                         </button>
                         {selectedTopics.length > 0 && (
                           <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -765,7 +964,13 @@ export default function App() {
                           </div>
                         )}
                       </div>
+                    </div>
+                  </div>
 
+                  {/* Entity Chips Selectors: Sources, Insts, Authors */}
+                  <div className="filter-group">
+                    <label className="filter-label">Fuentes, Instituciones y Autores</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {/* Sources */}
                       <div>
                         <button
@@ -1673,11 +1878,11 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px' }}>
+                    <div style={{ display: 'flex', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', flexWrap: 'wrap' }}>
                       <a
                         href={pkg.download_url}
                         className="btn btn-success"
-                        style={{ flex: 1, textDecoration: 'none' }}
+                        style={{ flex: 1, textDecoration: 'none', minWidth: '120px' }}
                         download
                       >
                         <Download size={16} />
@@ -1685,10 +1890,22 @@ export default function App() {
                       </a>
                       <button
                         className="btn btn-secondary"
-                        title="Ver Tablas y Archivos Incluidos"
-                        onClick={() => setSelectedPackageDetails(pkg)}
+                        title="Explorar Tablas en Panel Interactivo"
+                        style={{ color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.35)', background: 'rgba(56, 189, 248, 0.08)' }}
+                        onClick={() => {
+                          setSelectedPackageForTablePreview(pkg.package_name)
+                          setActiveTab('tables')
+                        }}
                       >
                         <FileSpreadsheet size={16} />
+                        <span>Explorar Tablas</span>
+                      </button>
+                      <button
+                        className="btn btn-secondary"
+                        title="Ver Ficha Técnica"
+                        onClick={() => setSelectedPackageDetails(pkg)}
+                      >
+                        <ExternalLink size={16} />
                       </button>
                       <button
                         className="btn btn-secondary"
@@ -1713,6 +1930,9 @@ export default function App() {
           <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {modalEntity === 'domain' && <Compass size={22} color="#38bdf8" />}
+                {modalEntity === 'field' && <Compass size={22} color="#818cf8" />}
+                {modalEntity === 'subfield' && <Compass size={22} color="#c084fc" />}
                 {modalEntity === 'topic' && <Compass size={22} color="var(--accent-primary)" />}
                 {modalEntity === 'source' && <BookOpen size={22} color="#fbbf24" />}
                 {modalEntity === 'institution' && <Building2 size={22} color="#34d399" />}
@@ -1720,7 +1940,13 @@ export default function App() {
                 {modalEntity === 'country' && <Globe2 size={22} color="#38bdf8" />}
                 {modalEntity === 'work_type' && <FileText size={22} color="#fb7185" />}
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-                  {modalEntity === 'topic'
+                  {modalEntity === 'domain'
+                    ? 'Seleccionar Dominio Científico'
+                    : modalEntity === 'field'
+                    ? 'Buscar Campo Científico'
+                    : modalEntity === 'subfield'
+                    ? 'Buscar Subcampo Especializado'
+                    : modalEntity === 'topic'
                     ? 'Buscar Tópico'
                     : modalEntity === 'source'
                     ? 'Buscar Revista / Fuente'
@@ -2146,6 +2372,36 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Modal Administrador de Corpus Guardados */}
+      <CorpusManagerModal
+        isOpen={corpusManagerModalOpen}
+        onClose={() => setCorpusManagerModalOpen(false)}
+        mode={corpusManagerMode}
+        currentCorpusState={{
+          corpusName: packageName,
+          sourceMode: searchMode,
+          totalWorksEstimated: previewData.total,
+          filters: {
+            query,
+            domain_names: selectedDomains.map(d => d.domain_name || d.name),
+            field_names: selectedFields.map(f => f.field_name || f.name),
+            subfield_names: selectedSubfields.map(sf => sf.subfield_name || sf.name),
+            topic_ids: selectedTopics.map(t => t.id),
+            source_ids: selectedSources.map(s => s.id),
+            institution_ids: selectedInstitutions.map(i => i.id),
+            author_ids: selectedAuthors.map(a => a.id),
+            country_codes: selectedCountries.map(c => c.code || c.id),
+            work_types: selectedTypes.map(t => t.id || t.type_id),
+            start_year: allYears ? 1900 : startYear,
+            end_year: allYears ? 2026 : endYear,
+            oa_status: oaStatus !== 'all' ? oaStatus : undefined
+          },
+          idsList: idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+        }}
+        onLoadCorpus={handleLoadSavedCorpus}
+        user={user}
+      />
     </div>
   )
 }

@@ -54,6 +54,12 @@ from api.routers.auth import (
     list_registered_users,
     get_current_user_profile
 )
+from api.routers.corpus_manager import (
+    list_saved_corpuses_endpoint,
+    save_corpus_endpoint,
+    get_saved_corpus_endpoint,
+    delete_saved_corpus_endpoint
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 logger = logging.getLogger('tlachia_api')
@@ -108,6 +114,12 @@ async def search_entities(request: Request):
     valid_types = {
         'topics': 'topics',
         'topic': 'topics',
+        'subfields': 'subfields',
+        'subfield': 'subfields',
+        'fields': 'fields',
+        'field': 'fields',
+        'domains': 'domains',
+        'domain': 'domains',
         'sources': 'sources',
         'source': 'sources',
         'institutions': 'institutions',
@@ -122,6 +134,93 @@ async def search_entities(request: Request):
         'work_type': 'work_types'
     }
     normalized_type = valid_types.get(entity_type, 'topics')
+
+    if normalized_type == 'domains':
+        DOMAINS_CATALOG = [
+            {"id": "1", "name": "Life Sciences (Ciencias de la Vida)", "display_name": "Life Sciences", "flag": "🧬", "desc": "Biología, biomedicina, ecología y biotecnología"},
+            {"id": "2", "name": "Social Sciences (Ciencias Sociales)", "display_name": "Social Sciences", "flag": "👥", "desc": "Economía, sociología, derecho, educación y humanidades"},
+            {"id": "3", "name": "Physical Sciences (Ciencias Físicas)", "display_name": "Physical Sciences", "flag": "⚛️", "desc": "Física, matemáticas, ingeniería, química e informática"},
+            {"id": "4", "name": "Health Sciences (Ciencias de la Salud)", "display_name": "Health Sciences", "flag": "🩺", "desc": "Medicina clínica, enfermería, salud pública y farmacología"}
+        ]
+        q_clean = query.strip().lower()
+        matches = [
+            {
+                'id': d['id'],
+                'full_id': f"https://openalex.org/domains/{d['id']}",
+                'name': f"{d['flag']} {d['name']}",
+                'type': 'domains',
+                'domain_name': d['display_name'],
+                'extra': {'description': d['desc'], 'domain_id': d['id']}
+            }
+            for d in DOMAINS_CATALOG
+            if q_clean in d['id'] or q_clean in d['name'].lower() or q_clean in d['display_name'].lower() or q_clean in d['desc'].lower()
+        ]
+        return JSONResponse({'results': matches})
+
+    if normalized_type == 'fields':
+        try:
+            clean_q = query.replace("'", "\\'")
+            sql = f"SELECT id, JSONExtractString(raw_data, 'display_name') as name FROM rag.fields WHERE positionCaseInsensitiveUTF8(JSONExtractString(raw_data, 'display_name'), '{clean_q}') > 0 LIMIT {limit}"
+            df = engine.query_engine.query_df(sql)
+            results = []
+            for _, row in df.iterrows():
+                raw_id = str(row.get('id', '')).split('/')[-1]
+                name = str(row.get('name', 'Sin nombre'))
+                results.append({
+                    'id': raw_id,
+                    'full_id': f"https://openalex.org/fields/{raw_id}",
+                    'name': f"🔬 {name}",
+                    'type': 'fields',
+                    'field_name': name,
+                    'extra': {'field_id': raw_id}
+                })
+            return JSONResponse({'results': results})
+        except Exception as e:
+            logger.warning(f"Error consultando fields en ClickHouse: {e}")
+
+    if normalized_type == 'subfields':
+        try:
+            clean_q = query.replace("'", "\\'")
+            sql = f"SELECT id, JSONExtractString(raw_data, 'display_name') as name FROM rag.subfields WHERE positionCaseInsensitiveUTF8(JSONExtractString(raw_data, 'display_name'), '{clean_q}') > 0 LIMIT {limit}"
+            df = engine.query_engine.query_df(sql)
+            results = []
+            for _, row in df.iterrows():
+                raw_id = str(row.get('id', '')).split('/')[-1]
+                name = str(row.get('name', 'Sin nombre'))
+                results.append({
+                    'id': raw_id,
+                    'full_id': f"https://openalex.org/subfields/{raw_id}",
+                    'name': f"🔍 {name}",
+                    'type': 'subfields',
+                    'subfield_name': name,
+                    'extra': {'subfield_id': raw_id}
+                })
+            return JSONResponse({'results': results})
+        except Exception as e:
+            logger.warning(f"Error consultando subfields en ClickHouse: {e}")
+
+    if normalized_type == 'topics':
+        try:
+            clean_q = query.replace("'", "\\'")
+            sql = f"SELECT id, display_name as name, works_count, cited_by_count FROM rag.topics WHERE positionCaseInsensitiveUTF8(display_name, '{clean_q}') > 0 ORDER BY works_count DESC LIMIT {limit}"
+            df = engine.query_engine.query_df(sql)
+            if len(df) > 0:
+                results = []
+                for _, row in df.iterrows():
+                    raw_id = str(row.get('id', '')).split('/')[-1]
+                    name = str(row.get('name', 'Sin nombre'))
+                    results.append({
+                        'id': raw_id,
+                        'full_id': f"https://openalex.org/{raw_id}",
+                        'name': f"🏷️ {name}",
+                        'type': 'topics',
+                        'works_count': int(row.get('works_count', 0)),
+                        'cited_by_count': int(row.get('cited_by_count', 0)),
+                        'extra': {}
+                    })
+                return JSONResponse({'results': results})
+        except Exception as e:
+            logger.warning(f"Fallback desde tabla rag.topics: {e}")
 
     if normalized_type == 'work_types':
         WORK_TYPES_CATALOG = [
@@ -776,6 +875,150 @@ async def list_exported_packages(request: Request):
     })
 
 
+AVAILABLE_INDICATOR_TABLES = [
+    {"id": "locations", "name": "Locations (Países)", "icon": "🌐", "slug": "locations"},
+    {"id": "locations_subnational", "name": "Locations Subnational (Estados)", "icon": "🗺️", "slug": "locations_subnational"},
+    {"id": "organizations", "name": "Organizations (Instituciones)", "icon": "🏢", "slug": "organizations"},
+    {"id": "organizations_colab", "name": "Organizations Colab (Co-afiliaciones)", "icon": "🤝", "slug": "organizations_colab"},
+    {"id": "sector_types", "name": "Sector Types (Sectores)", "icon": "🏭", "slug": "sector_types"},
+    {"id": "researchers", "name": "Researchers (Investigadores)", "icon": "👥", "slug": "researchers"},
+    {"id": "publication_sources", "name": "Publication Sources (Revistas)", "icon": "📚", "slug": "publication_sources"},
+    {"id": "funding_agencies", "name": "Funding Agencies (Financiamiento)", "icon": "🏛️", "slug": "funding_agencies"},
+    {"id": "research_areas_macro_topics", "name": "Domains / Macro Topics", "icon": "🧭", "slug": "research_areas_macro_topics"},
+    {"id": "research_areas_meso_topics", "name": "Fields / Meso Topics", "icon": "🔬", "slug": "research_areas_meso_topics"},
+    {"id": "research_areas_micro_topics", "name": "Subfields / Micro Topics", "icon": "🔍", "slug": "research_areas_micro_topics"},
+    {"id": "research_areas_esi", "name": "Research Areas ESI", "icon": "🌟", "slug": "research_areas_esi"},
+    {"id": "research_areas_sdg", "name": "Research Areas SDG (ODS)", "icon": "🎯", "slug": "research_areas_sdg"},
+    {"id": "concepts", "name": "Concepts", "icon": "💡", "slug": "concepts"},
+    {"id": "keywords", "name": "Keywords", "icon": "🏷️", "slug": "keywords"},
+    {"id": "economic_apc_breakdown", "name": "Economic APC Breakdown", "icon": "💰", "slug": "economic_apc_breakdown"}
+]
+
+TABLE_SLUG_MAP = {
+    "locations": "locations",
+    "locations_subnational": "locations_subnational",
+    "organizations": "organizations",
+    "organizations_colab": "organizations_colab",
+    "sector_types": "sector_types",
+    "researchers": "researchers",
+    "publication_sources": "publication_sources",
+    "funding_agencies": "funding_agencies",
+    "macro_topics": "research_areas_macro_topics",
+    "domains": "research_areas_macro_topics",
+    "meso_topics": "research_areas_meso_topics",
+    "fields": "research_areas_meso_topics",
+    "micro_topics": "research_areas_micro_topics",
+    "subfields": "research_areas_micro_topics",
+    "topics": "research_areas_micro_topics",
+    "research_areas_macro_topics": "research_areas_macro_topics",
+    "research_areas_meso_topics": "research_areas_meso_topics",
+    "research_areas_micro_topics": "research_areas_micro_topics",
+    "esi": "research_areas_esi",
+    "research_areas_esi": "research_areas_esi",
+    "sdg": "research_areas_sdg",
+    "research_areas_sdg": "research_areas_sdg",
+    "concepts": "concepts",
+    "keywords": "keywords",
+    "economic_apc": "economic_apc_breakdown",
+    "economic_apc_breakdown": "economic_apc_breakdown"
+}
+
+
+async def preview_table_endpoint(request: Request):
+    """
+    Retorna los datos estructurados, ordenables y paginados de una tabla parquet generada.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    package_name = request.path_params.get('package_name', '').strip()
+    table_id = request.query_params.get('table', 'organizations').strip().lower()
+    period = request.query_params.get('period', 'full').strip().lower()
+    page = max(1, int(request.query_params.get('page', 1)))
+    limit = max(10, min(500, int(request.query_params.get('limit', 50))))
+    sort_by = request.query_params.get('sort_by', '')
+    sort_order = request.query_params.get('sort_order', 'desc').strip().lower()
+    search_q = request.query_params.get('q', '').strip()
+
+    target_dir = EXPORTS_DIR / package_name
+    if not target_dir.exists():
+        return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
+
+    # Normalizar período
+    period_clean = 'recent' if period in ('recent', '2021-2025') else ('trend' if period == 'trend' else 'full')
+    table_slug = TABLE_SLUG_MAP.get(table_id, table_id)
+
+    parquet_path = target_dir / 'parquet_tables' / f"{table_slug}_{period_clean}.parquet"
+    if not parquet_path.exists():
+        # Búsqueda alternativa en directorio de tablas
+        parquet_dir = target_dir / 'parquet_tables'
+        found = False
+        if parquet_dir.exists():
+            for f in parquet_dir.glob("*.parquet"):
+                if table_slug in f.name and period_clean in f.name:
+                    parquet_path = f
+                    found = True
+                    break
+        if not found:
+            return JSONResponse({
+                'error': f"Tabla '{table_id}' ({period_clean}) no encontrada en el paquete.",
+                'available_tables': AVAILABLE_INDICATOR_TABLES
+            }, status_code=404)
+
+    try:
+        import pandas as pd
+        import numpy as np
+        df = pd.read_parquet(parquet_path)
+
+        # Filtro de búsqueda textual
+        if search_q:
+            mask = pd.Series(False, index=df.index)
+            for col in df.columns:
+                if df[col].dtype == 'object' or str(df[col].dtype) == 'string':
+                    mask = mask | df[col].astype(str).str.contains(search_q, case=False, na=False)
+            df = df[mask]
+
+        # Ordenamiento dinámico
+        if sort_by and sort_by in df.columns:
+            ascending = (sort_order == 'asc')
+            df = df.sort_values(by=sort_by, ascending=ascending)
+
+        total_rows = len(df)
+        total_pages = (total_rows + limit - 1) // limit if limit > 0 else 1
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+
+        page_df = df.iloc[start_idx:end_idx].copy()
+        page_df = page_df.replace([np.inf, -np.inf], None)
+        page_df = page_df.where(pd.notnull(page_df), None)
+
+        records = page_df.to_dict(orient='records')
+        columns = list(df.columns)
+
+        return JSONResponse({
+            'package_name': package_name,
+            'table_id': table_id,
+            'table_slug': table_slug,
+            'period': period_clean,
+            'total_rows': total_rows,
+            'page': page,
+            'limit': limit,
+            'total_pages': total_pages,
+            'columns': columns,
+            'data': records,
+            'available_tables': AVAILABLE_INDICATOR_TABLES,
+            'available_periods': [
+                {'id': 'full', 'label': 'Histórico Completo'},
+                {'id': 'recent', 'label': 'Reciente (2021-2025)'},
+                {'id': 'trend', 'label': 'Tendencia Anual'}
+            ]
+        })
+    except Exception as e:
+        logger.error(f"Error previsualizando tabla {table_id} en {package_name}: {e}")
+        return JSONResponse({'error': f"Error al procesar tabla: {str(e)}"}, status_code=500)
+
+
 async def download_indicators_zip(request: Request):
     """Descarga el paquete .ZIP generado."""
     package_name = request.path_params.get('package_name', '').strip()
@@ -874,10 +1117,15 @@ routes = [
     Route('/api/corpus/preview', preview_corpus, methods=['POST']),
     Route('/api/corpus/preview-ids', preview_ids, methods=['POST']),
     Route('/api/corpus/upload-preview', upload_corpus_preview, methods=['POST']),
+    Route('/api/corpus/saved', list_saved_corpuses_endpoint, methods=['GET']),
+    Route('/api/corpus/save', save_corpus_endpoint, methods=['POST']),
+    Route('/api/corpus/saved/{corpus_id}', get_saved_corpus_endpoint, methods=['GET']),
+    Route('/api/corpus/saved/{corpus_id}/delete', delete_saved_corpus_endpoint, methods=['DELETE', 'POST']),
     Route('/api/jobs/create', create_computation_job, methods=['POST']),
     Route('/api/jobs/status/{job_id}', get_job_status, methods=['GET']),
     Route('/api/jobs', list_jobs, methods=['GET']),
     Route('/api/indicators/packages', list_exported_packages, methods=['GET']),
+    Route('/api/indicators/table-preview/{package_name}', preview_table_endpoint, methods=['GET']),
     Route('/api/indicators/packages/{package_name}', delete_exported_package, methods=['DELETE']),
     Route('/api/indicators/delete/{package_name}', delete_exported_package, methods=['DELETE', 'POST']),
     Route('/api/indicators/download/{package_name}', download_indicators_zip, methods=['GET']),

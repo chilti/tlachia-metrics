@@ -111,9 +111,10 @@ export default function App() {
   const [isExportingCorpus, setIsExportingCorpus] = useState(null) // 'csv' | 'json' | null
   const pageSize = 20
 
-  // Individual Work Citing Modal State
+  // Individual Work Citing & References Modal State
   const [workCitingModalOpen, setWorkCitingModalOpen] = useState(false)
-  const [selectedWorkForCiting, setSelectedWorkForCiting] = useState({ id: '', title: '', citations: 0 })
+  const [workCitationModalTab, setWorkCitationModalTab] = useState('citing')
+  const [selectedWorkForCiting, setSelectedWorkForCiting] = useState({ id: '', title: '', citations: 0, references: 0 })
 
   // Package & Calculation State
   const [packageName, setPackageName] = useState('Mi_Corpus_TlachIA')
@@ -413,8 +414,8 @@ export default function App() {
     }
   }
 
-  // Open Citing Modal for an Individual Paper
-  const handleOpenWorkCitingModal = (workId, workTitle, citations) => {
+  // Open Citing / References Modal for an Individual Paper
+  const handleOpenWorkCitationModal = (workId, workTitle, citations, references, tab = 'citing') => {
     if (!user) {
       setLoginModalReason('general')
       setLoginModalOpen(true)
@@ -423,8 +424,10 @@ export default function App() {
     setSelectedWorkForCiting({
       id: workId,
       title: workTitle || 'Artículo Científico',
-      citations: citations || 0
+      citations: citations || 0,
+      references: references || 0
     })
+    setWorkCitationModalTab(tab)
     setWorkCitingModalOpen(true)
   }
 
@@ -2020,7 +2023,10 @@ export default function App() {
                             <th style={{ padding: '12px 12px', color: 'var(--text-main)', fontWeight: 700, minWidth: '180px' }}>
                               Disciplina / Tópico
                             </th>
-                            <th style={{ padding: '12px 10px', color: 'var(--text-main)', fontWeight: 700, textAlign: 'right', width: '80px' }}>
+                            <th style={{ padding: '12px 10px', color: 'var(--text-main)', fontWeight: 700, textAlign: 'right', width: '90px' }}>
+                              Referencias
+                            </th>
+                            <th style={{ padding: '12px 10px', color: 'var(--text-main)', fontWeight: 700, textAlign: 'right', width: '85px' }}>
                               Citas
                             </th>
                             <th style={{ padding: '12px 10px', color: 'var(--text-main)', fontWeight: 700, textAlign: 'center', width: '95px' }}>
@@ -2096,31 +2102,62 @@ export default function App() {
                                 )}
                               </td>
 
+                              <td style={{ padding: '12px 10px', verticalAlign: 'top', textAlign: 'right', fontWeight: 700, color: '#a78bfa', fontFamily: 'var(--font-mono)' }}>
+                                {r.referenced_works_count > 0 ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleOpenWorkCitationModal(r.id, r.title, r.cited_by_count, r.referenced_works_count, 'references')
+                                    }}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '3px 8px',
+                                      borderRadius: '12px',
+                                      background: 'rgba(167, 139, 250, 0.12)',
+                                      border: '1px solid rgba(167, 139, 250, 0.4)',
+                                      color: '#a78bfa',
+                                      fontWeight: 800,
+                                      fontSize: '0.78rem',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    title={`Explorar las ${r.referenced_works_count.toLocaleString()} referencias bibliográficas (Base Intelectual)`}
+                                  >
+                                    <span>{r.referenced_works_count.toLocaleString()}</span>
+                                    <BookOpen size={10} />
+                                  </button>
+                                ) : (
+                                  <span style={{ color: 'var(--text-dim)', paddingRight: '6px' }}>0</span>
+                                )}
+                              </td>
+
                               <td style={{ padding: '12px 10px', verticalAlign: 'top', textAlign: 'right', fontWeight: 700, color: '#fbbf24', fontFamily: 'var(--font-mono)' }}>
                                 {r.cited_by_count > 0 ? (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation()
-                                      handleOpenWorkCitingModal(r.id, r.title, r.cited_by_count)
+                                      handleOpenWorkCitationModal(r.id, r.title, r.cited_by_count, r.referenced_works_count, 'citing')
                                     }}
                                     style={{
                                       display: 'inline-flex',
                                       alignItems: 'center',
-                                      gap: '5px',
-                                      padding: '3px 9px',
+                                      gap: '4px',
+                                      padding: '3px 8px',
                                       borderRadius: '12px',
                                       background: 'rgba(251, 191, 36, 0.12)',
                                       border: '1px solid rgba(251, 191, 36, 0.4)',
                                       color: '#fbbf24',
                                       fontWeight: 800,
-                                      fontSize: '0.8rem',
+                                      fontSize: '0.78rem',
                                       cursor: 'pointer',
                                       transition: 'all 0.15s ease'
                                     }}
                                     title={`Explorar artículos citantes de este paper (${r.cited_by_count.toLocaleString()} citas)`}
                                   >
                                     <span>{r.cited_by_count.toLocaleString()}</span>
-                                    <Sparkles size={11} />
+                                    <Sparkles size={10} />
                                   </button>
                                 ) : (
                                   <span style={{ color: 'var(--text-dim)', paddingRight: '6px' }}>0</span>
@@ -2987,10 +3024,11 @@ export default function App() {
         user={user}
       />
 
-      {/* Modal de Artículos Citantes por Paper Individual */}
+      {/* Modal de Artículos Citantes y Base Intelectual por Paper Individual */}
       <CitingWorksModal
         isOpen={workCitingModalOpen}
         onClose={() => setWorkCitingModalOpen(false)}
+        initialTab={workCitationModalTab}
         workId={selectedWorkForCiting.id}
         workTitle={selectedWorkForCiting.title}
         onSendToCorpus={handleReceiveCitingCorpus}

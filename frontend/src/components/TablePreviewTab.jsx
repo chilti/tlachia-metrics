@@ -76,6 +76,7 @@ export default function TablePreviewTab({
 
   // Citing Works Modal State
   const [citingModalOpen, setCitingModalOpen] = useState(false)
+  const [citingModalInitialTab, setCitingModalInitialTab] = useState('citing')
   const [selectedCitingEntity, setSelectedCitingEntity] = useState({ type: '', name: '' })
 
   const [loading, setLoading] = useState(false)
@@ -111,7 +112,7 @@ export default function TablePreviewTab({
 
   // Fetch Table Data
   useEffect(() => {
-    if (!selectedPackage) {
+    if (!selectedPackage || !user) {
       setTableData({ columns: [], data: [], total_rows: 0, total_pages: 1 })
       setLoading(false)
       setError(null)
@@ -131,7 +132,10 @@ export default function TablePreviewTab({
       q: searchQuery
     }
 
-    axios.get(`/api/indicators/table-preview/${selectedPackage}`, { params })
+    axios.get(`/api/indicators/table-preview/${selectedPackage}`, { 
+      params,
+      headers: user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+    })
       .then(res => {
         setTableData(res.data)
         setLoading(false)
@@ -141,13 +145,14 @@ export default function TablePreviewTab({
         setError(err.response?.data?.error || 'No se pudo cargar la vista previa de la tabla seleccionada.')
         setLoading(false)
       })
-  }, [selectedPackage, selectedTable, selectedPeriod, page, pageSize, sortBy, sortOrder, searchQuery])
+  }, [selectedPackage, selectedTable, selectedPeriod, page, pageSize, sortBy, sortOrder, searchQuery, user])
 
-  const handleOpenCitingModal = (entityType, entityName) => {
+  const handleOpenCitingModal = (entityType = 'corpus', entityName = '', tab = 'citing') => {
     setSelectedCitingEntity({
       type: entityType,
       name: entityName
     })
+    setCitingModalInitialTab(tab)
     setCitingModalOpen(true)
   }
 
@@ -690,7 +695,7 @@ export default function TablePreviewTab({
             )}
 
             <button
-              onClick={() => handleOpenCitingModal('corpus', '')}
+              onClick={() => handleOpenCitingModal('corpus', '', 'citing')}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -708,6 +713,27 @@ export default function TablePreviewTab({
             >
               <Sparkles size={14} />
               <span>Citantes del Corpus</span>
+            </button>
+
+            <button
+              onClick={() => handleOpenCitingModal('corpus', '', 'references')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                background: 'rgba(129, 140, 248, 0.12)',
+                border: '1px solid rgba(129, 140, 248, 0.4)',
+                color: '#818cf8',
+                fontWeight: 700,
+                fontSize: '0.78rem',
+                cursor: 'pointer'
+              }}
+              title="Explorar las referencias bibliográficas que fundamentan la totalidad de este corpus"
+            >
+              <BookOpen size={14} />
+              <span>Base Intelectual</span>
             </button>
 
             {/* Pagination Top Indicator */}
@@ -945,10 +971,11 @@ export default function TablePreviewTab({
       </div>
       )}
 
-      {/* Citing Works Modal */}
+      {/* Citing & References Modal */}
       <CitingWorksModal
         isOpen={citingModalOpen}
         onClose={() => setCitingModalOpen(false)}
+        initialTab={citingModalInitialTab}
         packageName={selectedPackage}
         entityType={selectedCitingEntity.type}
         entityName={selectedCitingEntity.name}

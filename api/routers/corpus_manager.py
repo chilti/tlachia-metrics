@@ -70,6 +70,8 @@ async def save_corpus_endpoint(request: Request):
     ids_list = body.get("ids_list") or []
     total_works_estimated = int(body.get("total_works_estimated") or 0)
     is_favorite = 1 if body.get("is_favorite") else 0
+    parent_corpus_id = body.get("parent_corpus_id")
+    lineage_type = (body.get("lineage_type") or "standalone").strip()
 
     try:
         saved = save_user_corpus(
@@ -82,7 +84,9 @@ async def save_corpus_endpoint(request: Request):
             filters=filters,
             ids_list=ids_list,
             total_works_estimated=total_works_estimated,
-            is_favorite=is_favorite
+            is_favorite=is_favorite,
+            parent_corpus_id=parent_corpus_id,
+            lineage_type=lineage_type
         )
         return JSONResponse({"success": True, "corpus": saved})
     except Exception as e:

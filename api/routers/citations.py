@@ -442,7 +442,7 @@ async def derive_citing_corpus_endpoint(request: Request):
     if not description:
         description = f"Corpus derivado de los artículos citantes ({len(citing_ids):,} obras citantes únicas)."
 
-    # Persistir en SQLite
+    # Persistir en SQLite con metadatos de linaje
     saved = save_user_corpus(
         owner_orcid=auth_orcid,
         owner_name=user_name,
@@ -451,7 +451,9 @@ async def derive_citing_corpus_endpoint(request: Request):
         source_mode='ids',
         filters={},
         ids_list=citing_ids,
-        total_works_estimated=len(citing_ids)
+        total_works_estimated=len(citing_ids),
+        parent_corpus_id=package_name or work_id or None,
+        lineage_type='citing_impact'
     )
 
     return JSONResponse({
@@ -590,4 +592,372 @@ async def get_single_work_citing_endpoint(request: Request):
         'total_pages': total_pages,
         'citing_works': page_data,
         'all_citing_ids': unique_citing_ids
+    })
+
+
+# ==============================================================================
+# SECCIÓN 2: BASE INTELECTUAL (REFERENCIAS BIBLIOGRÁFICAS / ARTÍCULOS CITADOS)
+# ==============================================================================
+
+async def get_referenced_works_endpoint(request: Request):
+    """
+    Obtiene las referencias bibliográficas únicas (Base Intelectual) para un paquete de indicadores
+    o una entidad específica dentro del paquete.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    package_name = request.path_params.get('package_name', '').strip()
+    entity_type = request.query_params.get('entity_type', '').strip()
+    entity_name = request.query_params.get('entity_name', '').strip()
+    page = max(1, int(request.query_params.get('page', 1)))
+    limit = max(5, min(200, int(request.query_params.get('limit', 25))))
+    sort_by = request.query_params.get('sort_by', 'cited_by_count').strip()
+    sort_order = request.query_params.get('sort_order', 'desc').strip().lower()
+    search_q = request.query_params.get('q', '').strip()
+
+    pkg_dir = EXPORTS_DIR / package_name
+    if not pkg_dir.exists():
+        return JSONResponse({'error': f'Paquete {package_name} no encontrado.'}, status_code=404)
+
+    works_json_path = pkg_dir / f"{package_name}_openalex_works.json"
+    if not works_json_path.exists():
+        return JSONResponse({'error': f'Metadatos de obras no encontrados en {package_name}.'}, status_code=404)
+
+    try:
+        with open(works_json_path, 'r', encoding='utf-8') as f:
+            corpus_works = json.load(f)
+    except Exception as e:
+        logger.error(f"Error leyendo obras del corpus {package_name}: {e}")
+        return JSONResponse({'error': f'Error leyendo obras del corpus: {str(e)}'}, status_code=500)
+
+    # Filtrar obras del corpus que pertenecen a la entidad solicitada
+    matching_work_ids_set = set(_extract_entity_work_ids(corpus_works, entity_type, entity_name))
+    
+    # Extraer referenced_works de las obras coincidentes
+    all_ref_ids_ordered = []
+    seen_refs = set()
+    total_refs_count = 0
+    total_matching_works = 0
+
+    for w in corpus_works:
+        norm_wid = _normalize_openalex_id(w.get('id') or '')
+        if not matching_work_ids_set or norm_wid in matching_work_ids_set:
+            total_matching_works += 1
+            refs = w.get('referenced_works') or []
+            total_refs_count += len(refs)
+            for r in refs:
+                if r:
+                    norm_ref = _normalize_openalex_id(r)
+                    if norm_ref not in seen_refs:
+                        seen_refs.add(norm_ref)
+                        all_ref_ids_ordered.append(norm_ref)
+
+    unique_ref_count = len(all_ref_ids_ordered)
+
+    if not all_ref_ids_ordered:
+        return JSONResponse({
+            'package_name': package_name,
+            'entity_type': entity_type,
+            'entity_name': entity_name,
+            'total_referencing_works': total_matching_works,
+            'total_references_count': 0,
+            'unique_referenced_works_count': 0,
+            'filtered_count': 0,
+            'page': page,
+            'limit': limit,
+            'total_pages': 1,
+            'referenced_works': [],
+            'all_referenced_ids': []
+        })
+
+    client = _get_ch_client()
+    META_BATCH_SIZE = 2000
+    ref_metadata = []
+
+    for i in range(0, len(all_ref_ids_ordered), META_BATCH_SIZE):
+        batch_ids = all_ref_ids_ordered[i:i + META_BATCH_SIZE]
+        q_meta = f"""
+            SELECT 
+                id, doi, title, publication_year, type, 
+                author_names, institution_names, cited_by_count, 
+                fwci, percentile, is_oa, oa_status, 
+                domain_name, field_name, subfield_name
+            FROM rag.works_flat
+            WHERE id IN {tuple(batch_ids) if len(batch_ids) > 1 else f"('{batch_ids[0]}')"}
+        """
+        meta_rows = client.query(q_meta).result_rows
+        for r in meta_rows:
+            ref_metadata.append({
+                'id': r[0],
+                'doi': r[1] or '',
+                'title': r[2] or 'Sin título registrado',
+                'publication_year': r[3],
+                'type': r[4] or 'article',
+                'author_names': list(r[5]) if r[5] else [],
+                'institution_names': list(r[6]) if r[6] else [],
+                'cited_by_count': int(r[7] or 0),
+                'fwci': round(float(r[8] or 0), 2),
+                'percentile': round(float(r[9] or 0), 1),
+                'is_oa': bool(r[10]),
+                'oa_status': r[11] or 'closed',
+                'domain_name': r[12] or '',
+                'field_name': r[13] or '',
+                'subfield_name': r[14] or ''
+            })
+
+    # Filtrar por búsqueda textual si aplica
+    if search_q:
+        sq = search_q.lower()
+        ref_metadata = [
+            w for w in ref_metadata
+            if sq in w['title'].lower()
+            or any(sq in str(a).lower() for a in w['author_names'])
+            or any(sq in str(inst).lower() for inst in w['institution_names'])
+            or sq in w['field_name'].lower()
+            or sq in w['doi'].lower()
+        ]
+
+    # Ordenamiento
+    reverse_sort = (sort_order == 'desc')
+    if sort_by in ('cited_by_count', 'publication_year', 'fwci', 'percentile'):
+        ref_metadata.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse_sort)
+    elif sort_by in ('title', 'type', 'oa_status'):
+        ref_metadata.sort(key=lambda x: str(x.get(sort_by) or '').lower(), reverse=reverse_sort)
+
+    # Paginación
+    total_matching = len(ref_metadata)
+    total_pages = (total_matching + limit - 1) // limit if limit > 0 else 1
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    page_data = ref_metadata[start_idx:end_idx]
+
+    return JSONResponse({
+        'package_name': package_name,
+        'entity_type': entity_type,
+        'entity_name': entity_name,
+        'total_referencing_works': total_matching_works,
+        'total_references_count': total_refs_count,
+        'unique_referenced_works_count': unique_ref_count,
+        'filtered_count': total_matching,
+        'page': page,
+        'limit': limit,
+        'total_pages': total_pages,
+        'referenced_works': page_data,
+        'all_referenced_ids': all_ref_ids_ordered
+    })
+
+
+async def get_single_work_references_endpoint(request: Request):
+    """
+    Obtiene las referencias bibliográficas directas de un artículo individual (por su ID OpenAlex).
+    Responde en < 15ms directamente desde ClickHouse.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    raw_work_id = request.path_params.get('work_id', '').strip() or request.query_params.get('work_id', '').strip()
+    work_title = request.query_params.get('work_title', '').strip()
+    page = max(1, int(request.query_params.get('page', 1)))
+    limit = max(5, min(200, int(request.query_params.get('limit', 25))))
+    sort_by = request.query_params.get('sort_by', 'cited_by_count').strip()
+    sort_order = request.query_params.get('sort_order', 'desc').strip().lower()
+    search_q = request.query_params.get('q', '').strip()
+
+    if not raw_work_id:
+        return JSONResponse({'error': 'work_id es requerido.'}, status_code=400)
+
+    norm_id = _normalize_openalex_id(raw_work_id)
+    client = _get_ch_client()
+
+    # 1. Obtener los referenced_works del artículo
+    q_work = f"SELECT id, title, referenced_works FROM rag.works_flat WHERE id = '{norm_id}'"
+    work_rows = client.query(q_work).result_rows
+    if not work_rows:
+        return JSONResponse({
+            'work_id': norm_id,
+            'work_title': work_title or 'Artículo',
+            'package_name': '',
+            'entity_type': 'work',
+            'entity_name': work_title or norm_id,
+            'total_referencing_works': 1,
+            'total_references_count': 0,
+            'unique_referenced_works_count': 0,
+            'filtered_count': 0,
+            'page': page,
+            'limit': limit,
+            'total_pages': 1,
+            'referenced_works': [],
+            'all_referenced_ids': []
+        })
+
+    title_from_db = work_rows[0][1] or work_title
+    raw_refs = list(work_rows[0][2] or [])
+    norm_ref_ids = list(dict.fromkeys([_normalize_openalex_id(r) for r in raw_refs if r]))
+    total_refs_count = len(raw_refs)
+    unique_ref_count = len(norm_ref_ids)
+
+    if not norm_ref_ids:
+        return JSONResponse({
+            'work_id': norm_id,
+            'work_title': title_from_db or norm_id,
+            'package_name': '',
+            'entity_type': 'work',
+            'entity_name': title_from_db or norm_id,
+            'total_referencing_works': 1,
+            'total_references_count': 0,
+            'unique_referenced_works_count': 0,
+            'filtered_count': 0,
+            'page': page,
+            'limit': limit,
+            'total_pages': 1,
+            'referenced_works': [],
+            'all_referenced_ids': []
+        })
+
+    # 2. Consultar metadatos en rag.works_flat
+    META_BATCH_SIZE = 2000
+    ref_metadata = []
+
+    for i in range(0, len(norm_ref_ids), META_BATCH_SIZE):
+        batch_ids = norm_ref_ids[i:i + META_BATCH_SIZE]
+        q_meta = f"""
+            SELECT 
+                id, doi, title, publication_year, type, 
+                author_names, institution_names, cited_by_count, 
+                fwci, percentile, is_oa, oa_status, 
+                domain_name, field_name, subfield_name
+            FROM rag.works_flat
+            WHERE id IN {tuple(batch_ids) if len(batch_ids) > 1 else f"('{batch_ids[0]}')"}
+        """
+        meta_rows = client.query(q_meta).result_rows
+        for r in meta_rows:
+            ref_metadata.append({
+                'id': r[0],
+                'doi': r[1] or '',
+                'title': r[2] or 'Sin título registrado',
+                'publication_year': r[3],
+                'type': r[4] or 'article',
+                'author_names': list(r[5]) if r[5] else [],
+                'institution_names': list(r[6]) if r[6] else [],
+                'cited_by_count': int(r[7] or 0),
+                'fwci': round(float(r[8] or 0), 2),
+                'percentile': round(float(r[9] or 0), 1),
+                'is_oa': bool(r[10]),
+                'oa_status': r[11] or 'closed',
+                'domain_name': r[12] or '',
+                'field_name': r[13] or '',
+                'subfield_name': r[14] or ''
+            })
+
+    # 3. Filtrar por búsqueda textual si aplica
+    if search_q:
+        sq = search_q.lower()
+        ref_metadata = [
+            w for w in ref_metadata
+            if sq in w['title'].lower()
+            or any(sq in str(a).lower() for a in w['author_names'])
+            or any(sq in str(inst).lower() for inst in w['institution_names'])
+            or sq in w['field_name'].lower()
+            or sq in w['doi'].lower()
+        ]
+
+    # 4. Ordenamiento
+    reverse_sort = (sort_order == 'desc')
+    if sort_by in ('cited_by_count', 'publication_year', 'fwci', 'percentile'):
+        ref_metadata.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse_sort)
+    elif sort_by in ('title', 'type', 'oa_status'):
+        ref_metadata.sort(key=lambda x: str(x.get(sort_by) or '').lower(), reverse=reverse_sort)
+
+    # 5. Paginación
+    total_matching = len(ref_metadata)
+    total_pages = (total_matching + limit - 1) // limit if limit > 0 else 1
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    page_data = ref_metadata[start_idx:end_idx]
+
+    return JSONResponse({
+        'work_id': norm_id,
+        'work_title': title_from_db or norm_id,
+        'package_name': '',
+        'entity_type': 'work',
+        'entity_name': title_from_db or norm_id,
+        'total_referencing_works': 1,
+        'total_references_count': total_refs_count,
+        'unique_referenced_works_count': unique_ref_count,
+        'filtered_count': total_matching,
+        'page': page,
+        'limit': limit,
+        'total_pages': total_pages,
+        'referenced_works': page_data,
+        'all_referenced_ids': norm_ref_ids
+    })
+
+
+async def derive_referenced_corpus_endpoint(request: Request):
+    """
+    Guarda las obras referenciadas (Base Intelectual) como un nuevo corpus de usuario en SQLite
+    con source_mode = 'ids' y metadatos de linaje parent_corpus_id y lineage_type = 'intellectual_base'.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    package_name = body.get('package_name', '').strip()
+    work_id = body.get('work_id', '').strip()
+    entity_type = body.get('entity_type', '').strip()
+    entity_name = body.get('entity_name', '').strip()
+    user_name = body.get('user_name', '').strip() or auth_orcid
+    corpus_name_req = body.get('corpus_name', '').strip()
+    referenced_ids = body.get('referenced_ids', [])
+    description = body.get('description', '').strip()
+
+    if not corpus_name_req:
+        if work_id:
+            new_corpus_name = f"Base_Intelectual_{entity_name[:30] if entity_name else 'Paper'}"
+        elif entity_name:
+            new_corpus_name = f"Base_Intelectual_{entity_name[:30]}_{package_name}"
+        elif package_name:
+            new_corpus_name = f"Base_Intelectual_{package_name}"
+        else:
+            new_corpus_name = "Base_Intelectual_Corpus"
+    else:
+        new_corpus_name = corpus_name_req
+
+    new_corpus_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in new_corpus_name).strip('_')
+
+    if not referenced_ids:
+        return JSONResponse({'error': 'No se recibieron IDs de referencias para conformar el nuevo corpus.'}, status_code=400)
+
+    # Normalizar IDs
+    norm_ref_ids = list(dict.fromkeys([_normalize_openalex_id(rid) for rid in referenced_ids if rid]))
+
+    if not description:
+        description = f"Base Intelectual derivada de las referencias bibliográficas ({len(norm_ref_ids):,} obras citadas únicas)."
+
+    # Persistir en SQLite con metadatos de linaje
+    saved = save_user_corpus(
+        owner_orcid=auth_orcid,
+        owner_name=user_name,
+        corpus_name=new_corpus_name,
+        description=description,
+        source_mode='ids',
+        filters={},
+        ids_list=norm_ref_ids,
+        total_works_estimated=len(norm_ref_ids),
+        parent_corpus_id=package_name or work_id or None,
+        lineage_type='intellectual_base'
+    )
+
+    return JSONResponse({
+        'success': True,
+        'message': f"Nuevo corpus de Base Intelectual '{new_corpus_name}' creado con éxito con {len(norm_ref_ids):,} obras citadas.",
+        'corpus': saved
     })

@@ -463,7 +463,7 @@ class CorpusBuilder:
 
         # Muestra ordenada por citas descendentes
         cols = [
-            'id', 'doi', 'title', 'publication_year', 'cited_by_count', 'fwci',
+            'id', 'doi', 'title', 'publication_year', 'cited_by_count', 'referenced_works_count', 'fwci',
             'is_oa', 'oa_status', 'source_id', 'topic_id', 'topic', 'field',
             'author_names', 'institution_names'
         ]
@@ -482,6 +482,7 @@ class CorpusBuilder:
                     'title': str(r['title']) if pd.notna(r['title']) else 'Sin título',
                     'publication_year': int(r['publication_year']) if pd.notna(r['publication_year']) else 0,
                     'cited_by_count': int(r['cited_by_count']) if pd.notna(r['cited_by_count']) else 0,
+                    'referenced_works_count': int(r['referenced_works_count']) if ('referenced_works_count' in r and pd.notna(r['referenced_works_count'])) else 0,
                     'fwci': float(r['fwci']) if pd.notna(r['fwci']) else 0.0,
                     'is_oa': bool(r['is_oa']),
                     'oa_status': str(r['oa_status']) if pd.notna(r['oa_status']) else 'closed',

@@ -102,9 +102,20 @@ def init_users_db():
         created_at DATETIME,
         updated_at DATETIME,
         last_used_at DATETIME,
-        is_favorite INTEGER DEFAULT 0
+        is_favorite INTEGER DEFAULT 0,
+        parent_corpus_id TEXT,
+        lineage_type TEXT DEFAULT 'standalone'
     )
     """)
+
+    # Migración automática si las columnas no existen
+    cursor.execute("PRAGMA table_info(user_saved_corpus)")
+    cols = [c[1] for c in cursor.fetchall()]
+    if "parent_corpus_id" not in cols:
+        cursor.execute("ALTER TABLE user_saved_corpus ADD COLUMN parent_corpus_id TEXT")
+    if "lineage_type" not in cols:
+        cursor.execute("ALTER TABLE user_saved_corpus ADD COLUMN lineage_type TEXT DEFAULT 'standalone'")
+
     conn.commit()
     conn.close()
 
@@ -119,7 +130,9 @@ def save_user_corpus(
     filters: dict = None,
     ids_list: list = None,
     total_works_estimated: int = 0,
-    is_favorite: int = 0
+    is_favorite: int = 0,
+    parent_corpus_id: Optional[str] = None,
+    lineage_type: str = "standalone"
 ) -> dict:
     """Crea o actualiza un corpus guardado del usuario."""
     init_users_db()
@@ -143,12 +156,14 @@ def save_user_corpus(
         INSERT OR REPLACE INTO user_saved_corpus (
             corpus_id, owner_orcid, owner_name, corpus_name, description,
             source_mode, filters_json, ids_list_json, total_works_estimated,
-            created_at, updated_at, last_used_at, is_favorite
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            created_at, updated_at, last_used_at, is_favorite,
+            parent_corpus_id, lineage_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         corpus_id, owner_orcid, owner_name, corpus_name, description,
         source_mode, filters_json, ids_list_json, total_works_estimated,
-        created_at, now_iso, now_iso, is_favorite
+        created_at, now_iso, now_iso, is_favorite,
+        parent_corpus_id, lineage_type
     ))
     conn.commit()
     conn.close()
@@ -165,7 +180,9 @@ def save_user_corpus(
         "total_works_estimated": total_works_estimated,
         "created_at": created_at,
         "updated_at": now_iso,
-        "is_favorite": is_favorite
+        "is_favorite": is_favorite,
+        "parent_corpus_id": parent_corpus_id,
+        "lineage_type": lineage_type
     }
 
 
@@ -194,6 +211,7 @@ def list_user_corpuses(owner_orcid: str, is_admin: bool = False) -> list:
         except Exception:
             ids = []
 
+        keys = r.keys()
         corpuses.append({
             "corpus_id": r["corpus_id"],
             "owner_orcid": r["owner_orcid"],
@@ -208,6 +226,8 @@ def list_user_corpuses(owner_orcid: str, is_admin: bool = False) -> list:
             "updated_at": r["updated_at"],
             "last_used_at": r["last_used_at"],
             "is_favorite": bool(r["is_favorite"]),
+            "parent_corpus_id": r["parent_corpus_id"] if "parent_corpus_id" in keys else None,
+            "lineage_type": r["lineage_type"] if "lineage_type" in keys else "standalone",
             "is_owner": (r["owner_orcid"] == owner_orcid)
         })
 
@@ -246,7 +266,8 @@ def get_user_corpus(corpus_id: str, owner_orcid: str, is_admin: bool = False) ->
     except Exception:
         ids = []
 
-    res = {
+    keys = r.keys()
+    result = {
         "corpus_id": r["corpus_id"],
         "owner_orcid": r["owner_orcid"],
         "owner_name": r["owner_name"],
@@ -260,10 +281,12 @@ def get_user_corpus(corpus_id: str, owner_orcid: str, is_admin: bool = False) ->
         "updated_at": r["updated_at"],
         "last_used_at": now_iso,
         "is_favorite": bool(r["is_favorite"]),
-        "is_owner": (r["owner_orcid"] == owner_orcid)
+        "parent_corpus_id": r["parent_corpus_id"] if "parent_corpus_id" in keys else None,
+        "lineage_type": r["lineage_type"] if "lineage_type" in keys else "standalone",
+        "is_owner": True
     }
     conn.close()
-    return res
+    return result
 
 
 def delete_user_corpus(corpus_id: str, owner_orcid: str, is_admin: bool = False) -> bool:

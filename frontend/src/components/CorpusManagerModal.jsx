@@ -297,6 +297,16 @@ export default function CorpusManagerModal({
                         >
                           {corpus.source_mode === 'ids' ? 'DOIs / IDs' : (corpus.source_mode === 'upload' ? 'Archivo' : 'Filtros')}
                         </span>
+                        {corpus.lineage_type === 'intellectual_base' && (
+                          <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(129, 140, 248, 0.2)', color: '#818cf8', fontWeight: 700 }}>
+                            📚 Base Intelectual
+                          </span>
+                        )}
+                        {corpus.lineage_type === 'citing_impact' && (
+                          <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(251, 191, 36, 0.2)', color: '#fbbf24', fontWeight: 700 }}>
+                            ✨ Impacto (Citantes)
+                          </span>
+                        )}
                       </div>
                       {corpus.description && (
                         <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', margin: 0 }}>
@@ -348,6 +358,9 @@ export default function CorpusManagerModal({
                     <span>📅 Guardado: {corpus.updated_at || corpus.created_at}</span>
                     {corpus.total_works_estimated > 0 && (
                       <span>• 📊 ~{corpus.total_works_estimated.toLocaleString()} obras</span>
+                    )}
+                    {corpus.parent_corpus_id && (
+                      <span style={{ color: 'var(--text-dim)' }}>• 🔗 Derivado de: <strong style={{ color: '#fff' }}>{corpus.parent_corpus_id}</strong></span>
                     )}
                     {corpus.filters?.country_code && (
                       <span>• 🇲🇽 País: {corpus.filters.country_code}</span>

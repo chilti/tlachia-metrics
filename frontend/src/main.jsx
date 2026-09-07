@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import axios from 'axios'
 import App from './App.jsx'
+import { I18nProvider } from './i18n'
 import './index.css'
 
 // Interceptor to prepend reverse proxy prefix and inject user auth header dynamically
@@ -26,7 +27,9 @@ axios.interceptors.request.use((config) => {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <App />
+    <I18nProvider>
+      <App />
+    </I18nProvider>
   </React.StrictMode>,
 )
 

@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 
 from .core.config import EXPORTS_DIR, CACHE_DIR, RECENT_PERIOD_START, RECENT_PERIOD_END
 from .core.corpus_builder import CorpusBuilder
@@ -28,7 +28,7 @@ from .aggregators.taxonomy_aggregator import (
 )
 from .aggregators.concepts_keywords_aggregator import ConceptsAggregator, KeywordsAggregator
 from .aggregators.economic_apc_aggregator import EconomicAPCAggregator
-from .exporters.excel_builder import save_styled_excel
+from .exporters.excel_builder import save_styled_excel, save_styled_excel_multisheet
 from .exporters.zip_packager import create_unified_indicators_zip
 from .exporters.parquet_exporter import save_parquet_table
 
@@ -68,6 +68,7 @@ class TlachIAMetricsEngine:
 
     def process_and_export_package(self, df: pd.DataFrame, package_name: str = 'TlachIA_Metrics_Report',
                                    output_dir: Optional[Union[str, Path]] = None,
+                                   periods: Optional[List[Tuple[int, int]]] = None,
                                    export_parquet: bool = True,
                                    export_json: bool = True,
                                    create_zip: bool = True,
@@ -75,7 +76,7 @@ class TlachIAMetricsEngine:
                                    progress_callback: Optional[Any] = None) -> Dict[str, Any]:
         """
         Ejecuta el pipeline de indicadores:
-        1. Calcula indicadores para las 15 entidades (Histórico, 2021-2025 y Trend).
+        1. Calcula indicadores para las 16 entidades (Histórico, Periodos Consecutivos, Matriz de Desempeño y Trend).
         2. Guarda cada tabla en archivo Excel formateado (.xlsx).
         3. Exporta el archivo JSON completo de registros del corpus.
         4. Opcionalmente exporta las tablas Parquet para consulta interactiva en tiempo real.
@@ -83,6 +84,13 @@ class TlachIAMetricsEngine:
         """
         if df is None or len(df) == 0:
             raise ValueError('El DataFrame del corpus está vacío.')
+
+        # Normalizar periodos si no se suministran
+        if not periods:
+            periods = [(RECENT_PERIOD_START, RECENT_PERIOD_END)]
+        else:
+            # Asegurar formato List[Tuple[int, int]] y ordenar cronológicamente
+            periods = sorted([(int(p[0]), int(p[1])) for p in periods], key=lambda x: x[0])
 
         if progress_callback:
             progress_callback(10, 'Iniciando estructuración de carpetas y carga de entidades...')
@@ -94,7 +102,7 @@ class TlachIAMetricsEngine:
         if export_parquet:
             parquet_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f'Iniciando procesamiento de {len(df)} artículos para paquete {package_name}...')
+        logger.info(f'Iniciando procesamiento de {len(df)} artículos para paquete {package_name} con periodos {periods}...')
 
         aggregators_map = {
             'Locations': LocationsAggregator(),
@@ -117,6 +125,7 @@ class TlachIAMetricsEngine:
 
         package_files_to_zip = []
         tables_summary = {}
+        consolidated_matrices = {}
 
         total_aggs = len(aggregators_map)
         for idx, (entity_label, agg) in enumerate(aggregators_map.items(), start=1):
@@ -125,6 +134,7 @@ class TlachIAMetricsEngine:
                 progress_callback(pct, f'Calculando indicadores: {entity_label} ({idx}/{total_aggs})...')
             
             logger.info(f'Calculando {entity_label}...')
+            entity_slug = entity_label.lower().replace(" ", "_")
             
             # 1. Histórico Completo
             df_full = agg.aggregate_full(df)
@@ -132,29 +142,68 @@ class TlachIAMetricsEngine:
             save_styled_excel(df_full, f_full, sheet_name='Full Period')
             package_files_to_zip.append(f_full)
             if export_parquet and len(df_full) > 0:
-                save_parquet_table(df_full, parquet_dir / f'{entity_label.lower().replace(" ", "_")}_full.parquet')
+                f_full_pq = parquet_dir / f'{entity_slug}_full.parquet'
+                save_parquet_table(df_full, f_full_pq)
+                package_files_to_zip.append(f_full_pq)
 
-            # 2. Periodo Reciente (2021-2025)
-            df_rec = agg.aggregate_recent(df, start_year=RECENT_PERIOD_START, end_year=RECENT_PERIOD_END)
-            f_rec = excel_dir / f'{entity_label} 2021-2025.xlsx'
-            save_styled_excel(df_rec, f_rec, sheet_name='2021-2025')
-            package_files_to_zip.append(f_rec)
-            if export_parquet and len(df_rec) > 0:
-                save_parquet_table(df_rec, parquet_dir / f'{entity_label.lower().replace(" ", "_")}_recent.parquet')
+            # 2. Periodos Consecutivos
+            period_row_counts = {}
+            for s_yr, e_yr in periods:
+                p_label = f"{s_yr}-{e_yr}"
+                p_slug = f"{s_yr}_{e_yr}"
+                df_p = agg.aggregate_period(df, start_year=s_yr, end_year=e_yr)
+                f_p = excel_dir / f'{entity_label} {p_label}.xlsx'
+                save_styled_excel(df_p, f_p, sheet_name=p_label)
+                package_files_to_zip.append(f_p)
+                if export_parquet and len(df_p) > 0:
+                    f_p_pq = parquet_dir / f'{entity_slug}_{p_slug}.parquet'
+                    save_parquet_table(df_p, f_p_pq)
+                    package_files_to_zip.append(f_p_pq)
+                    # Compatibilidad con 'recent' si coincide con RECENT_PERIOD_START/END o el último
+                    if (s_yr == RECENT_PERIOD_START and e_yr == RECENT_PERIOD_END) or (s_yr, e_yr) == periods[-1]:
+                        f_recent_pq = parquet_dir / f'{entity_slug}_recent.parquet'
+                        save_parquet_table(df_p, f_recent_pq)
+                        package_files_to_zip.append(f_recent_pq)
+                period_row_counts[p_label] = len(df_p)
 
-            # 3. Tendencia Anual (Trend)
+            # 3. Matriz Comparativa de Desempeño
+            df_matrix = agg.aggregate_performance_matrix(df, periods=periods)
+            if df_matrix is not None:
+                f_matrix = excel_dir / f'{entity_label} Performance Matrix.xlsx'
+                save_styled_excel(df_matrix, f_matrix, sheet_name='Performance Matrix')
+                package_files_to_zip.append(f_matrix)
+                consolidated_matrices[entity_label] = df_matrix
+                if export_parquet and len(df_matrix) > 0:
+                    f_matrix_pq = parquet_dir / f'{entity_slug}_performance_matrix.parquet'
+                    save_parquet_table(df_matrix, f_matrix_pq)
+                    package_files_to_zip.append(f_matrix_pq)
+
+            # 4. Tendencia Anual (Trend)
             df_trend = agg.aggregate_trend(df)
             f_trend = excel_dir / f'{entity_label} Trend.xlsx'
             save_styled_excel(df_trend, f_trend, sheet_name='Annual Trend')
             package_files_to_zip.append(f_trend)
             if export_parquet and len(df_trend) > 0:
-                save_parquet_table(df_trend, parquet_dir / f'{entity_label.lower().replace(" ", "_")}_trend.parquet')
+                f_trend_pq = parquet_dir / f'{entity_slug}_trend.parquet'
+                save_parquet_table(df_trend, f_trend_pq)
+                package_files_to_zip.append(f_trend_pq)
 
             tables_summary[entity_label] = {
                 'full_rows': len(df_full),
-                'recent_rows': len(df_rec),
+                'periods': period_row_counts,
+                'matrix_rows': len(df_matrix) if df_matrix is not None else 0,
                 'trend_rows': len(df_trend)
             }
+
+        # Generar Libro Excel Consolidado Multihistorial de Matrices de Desempeño
+        if consolidated_matrices:
+            f_master_matrix = excel_dir / 'Matriz_Desempeño_Longitudinal_Consolidada.xlsx'
+            try:
+                save_styled_excel_multisheet(consolidated_matrices, f_master_matrix)
+                package_files_to_zip.append(f_master_matrix)
+                logger.info(f'Libro consolidado multihistorial de matrices generado en: {f_master_matrix}')
+            except Exception as e:
+                logger.error(f'Error generando Matriz_Desempeño_Longitudinal_Consolidada.xlsx: {e}', exc_info=True)
 
         # 4. Exportar el archivo JSON completo de registros
         json_file_path = None
@@ -189,6 +238,8 @@ class TlachIAMetricsEngine:
         return {
             'package_name': package_name,
             'total_works': len(df),
+            'periods': [f"{s}-{e}" for s, e in periods],
+            'has_performance_matrix': True,
             'total_excel_files': len([f for f in package_files_to_zip if str(f).endswith('.xlsx')]),
             'json_file_path': str(json_file_path) if json_file_path else None,
             'zip_path': str(zip_path) if zip_path else None,

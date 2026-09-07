@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
+import { useI18n } from '../i18n'
 import {
   Sparkles,
   BookOpen,
@@ -33,6 +34,7 @@ export default function CitingWorksModal({
   onSendToCorpus,
   user
 }) {
+  const { t } = useI18n()
   const [activeTab, setActiveTab] = useState(initialTab || 'citing')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -296,8 +298,8 @@ export default function CitingWorksModal({
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#fff' }}>
-                  {isCiting ? 'Frente de Impacto (Artículos Citantes)' : 'Base Intelectual (Referencias Bibliográficas)'}
+                <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
+                  {isCiting ? t('modals.citing.header_citing') : t('modals.citing.header_references')}
                 </h2>
                 <span style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: '12px', background: isCiting ? 'rgba(56, 189, 248, 0.2)' : 'rgba(129, 140, 248, 0.2)', color: isCiting ? 'var(--accent-primary)' : '#818cf8', fontWeight: 700 }}>
                   OpenAlex ClickHouse
@@ -305,11 +307,11 @@ export default function CitingWorksModal({
               </div>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', margin: '2px 0 0' }}>
                 {workId ? (
-                  <>{isCiting ? 'Impacto directo de: ' : 'Referencias citadas por: '}<strong style={{ color: 'var(--text-main)' }}>{workTitle || workId}</strong></>
+                  <>{isCiting ? t('modals.citing.impact_direct_of') : t('modals.citing.references_cited_by')}<strong style={{ color: 'var(--text-main)' }}>{workTitle || workId}</strong></>
                 ) : entityName ? (
-                  <>{isCiting ? 'Impacto directo de: ' : 'Base Intelectual de: '}<strong style={{ color: 'var(--text-main)' }}>{entityName}</strong> ({entityType}) en <em>{packageName}</em></>
+                  <>{isCiting ? t('modals.citing.impact_direct_of') : t('modals.citing.references_cited_by')}<strong style={{ color: 'var(--text-main)' }}>{entityName}</strong> ({entityType}) en <em>{packageName}</em></>
                 ) : (
-                  <>{isCiting ? 'Impacto directo de la totalidad del corpus ' : 'Base Intelectual citada por la totalidad del corpus '}<em>{packageName}</em></>
+                  <>{isCiting ? t('modals.citing.impact_all_corpus') : t('modals.citing.references_all_corpus')}<em>{packageName}</em></>
                 )}
               </p>
             </div>
@@ -345,7 +347,7 @@ export default function CitingWorksModal({
             }}
           >
             <Sparkles size={16} />
-            <span>✨ Frente de Impacto (Artículos Citantes)</span>
+            <span>{t('modals.citing.tab_citing')}</span>
           </button>
 
           <button
@@ -368,7 +370,7 @@ export default function CitingWorksModal({
             }}
           >
             <BookOpen size={16} />
-            <span>📚 Base Intelectual (Referencias Citadas)</span>
+            <span>{t('modals.citing.tab_references')}</span>
           </button>
         </div>
 
@@ -376,23 +378,23 @@ export default function CitingWorksModal({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '14px' }}>
           <div style={{ background: 'rgba(0, 0, 0, 0.25)', padding: '10px 14px', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
             <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700, display: 'block' }}>
-              🎯 Obras Analizadas
+              {t('modals.citing.kpi_analyzed_works')}
             </span>
             <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-main)', fontFamily: 'var(--font-mono)' }}>
               {totalAnalyzedWorks.toLocaleString()}
             </div>
-            <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>del corpus / selección</span>
+            <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>{t('modals.citing.kpi_corpus_selection')}</span>
           </div>
 
           <div style={{ background: 'rgba(0, 0, 0, 0.25)', padding: '10px 14px', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
             <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700, display: 'block' }}>
-              {isCiting ? '📈 Citas Totales Recibidas' : '📚 Referencias Brutas Totales'}
+              {isCiting ? t('modals.citing.kpi_citations_total') : t('modals.citing.kpi_references_total')}
             </span>
             <div style={{ fontSize: '1.2rem', fontWeight: 800, color: isCiting ? '#fbbf24' : '#c084fc', fontFamily: 'var(--font-mono)' }}>
               {totalRawCount.toLocaleString()}
             </div>
             <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>
-              {isCiting ? 'aristas salientes de citación' : 'referencias citadas en las obras'}
+              {isCiting ? t('modals.citing.kpi_citations_sub') : t('modals.citing.kpi_references_sub')}
             </span>
           </div>
 
@@ -403,15 +405,15 @@ export default function CitingWorksModal({
             border: isCiting ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid rgba(129, 140, 248, 0.3)'
           }}>
             <span style={{ fontSize: '0.68rem', color: isCiting ? 'var(--accent-primary)' : '#818cf8', textTransform: 'uppercase', fontWeight: 700, display: 'block' }}>
-              {isCiting ? '🎯 Artículos Citantes Únicos' : '💡 Base Intelectual Única'}
+              {isCiting ? t('modals.citing.kpi_unique_citing') : t('modals.citing.kpi_unique_references')}
             </span>
             <div style={{ fontSize: '1.2rem', fontWeight: 800, color: isCiting ? 'var(--accent-primary)' : '#818cf8', fontFamily: 'var(--font-mono)' }}>
               {uniqueCount.toLocaleString()}
             </div>
             <span style={{ fontSize: '0.66rem', color: 'var(--text-dim)' }}>
               {totalRawCount > 0 ? (
-                `Obras únicas (${((uniqueCount / totalRawCount) * 100).toFixed(1)}% desduplicación)`
-              ) : 'Sin obras registradas'}
+                t('modals.citing.kpi_dedup_ratio', { pct: ((uniqueCount / totalRawCount) * 100).toFixed(1) })
+              ) : t('modals.citing.kpi_no_works')}
             </span>
           </div>
         </div>
@@ -422,7 +424,7 @@ export default function CitingWorksModal({
             <Search size={15} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '9px' }} />
             <input
               type="text"
-              placeholder={isCiting ? "Buscar en artículos citantes (título, autor, campo, DOI)..." : "Buscar en referencias de la base intelectual (título, autor, DOI)..."}
+              placeholder={isCiting ? t('modals.citing.search_citing_placeholder') : t('modals.citing.search_references_placeholder')}
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
@@ -479,7 +481,7 @@ export default function CitingWorksModal({
               }}
             >
               {isSavingCorpus ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              <span>{isCiting ? 'Guardar Citantes' : 'Guardar Base Intelectual'}</span>
+              <span>{isCiting ? t('modals.citing.btn_save_citing') : t('modals.citing.btn_save_references')}</span>
             </button>
 
             <button
@@ -501,7 +503,7 @@ export default function CitingWorksModal({
               }}
             >
               <Layers size={14} />
-              <span>{isCiting ? 'Conformar Citantes y Calcular' : 'Conformar Base Intelectual y Calcular'}</span>
+              <span>{isCiting ? t('modals.citing.btn_derive_citing') : t('modals.citing.btn_derive_references')}</span>
               <ArrowRight size={14} />
             </button>
           </div>
@@ -526,50 +528,50 @@ export default function CitingWorksModal({
           {loading ? (
             <div style={{ padding: '40px', textAlign: 'center', color: isCiting ? 'var(--accent-primary)' : '#818cf8' }}>
               <Loader2 size={30} className="animate-spin" style={{ margin: '0 auto 10px' }} />
-              <p style={{ fontSize: '0.85rem' }}>{isCiting ? 'Consultando grafo de citantes en ClickHouse...' : 'Consultando grafo de referencias en ClickHouse...'}</p>
+              <p style={{ fontSize: '0.85rem' }}>{isCiting ? t('modals.citing.loading_citing') : t('modals.citing.loading_references')}</p>
             </div>
           ) : currentWorksList.length === 0 ? (
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-dim)' }}>
               <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>
-                {isCiting ? 'No se encontraron artículos citantes registrados' : 'No se encontraron referencias bibliográficas registradas'}
+                {isCiting ? t('modals.citing.empty_title_citing') : t('modals.citing.empty_title_references')}
               </p>
               <p style={{ fontSize: '0.78rem' }}>
-                {isCiting ? 'Esta entidad o selección no tiene citas salientes indexadas en OpenAlex.' : 'Esta entidad o selección no tiene referencias bibliográficas indexadas en OpenAlex.'}
+                {isCiting ? t('modals.citing.empty_desc_citing') : t('modals.citing.empty_desc_references')}
               </p>
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
-              <thead style={{ position: 'sticky', top: 0, background: '#1e293b', zIndex: 5, borderBottom: '1px solid var(--border-color)' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--table-header-bg)', zIndex: 5, borderBottom: '1px solid var(--border-subtle)' }}>
                 <tr>
                   <th style={{ padding: '10px 12px', color: 'var(--text-main)', fontWeight: 700, minWidth: '280px' }}>
-                    {isCiting ? 'Artículo Citante (Impacto)' : 'Artículo Citado (Base Intelectual)'}
+                    {isCiting ? t('modals.citing.th_work_citing') : t('modals.citing.th_work_referenced')}
                   </th>
                   <th
                     onClick={() => handleSort('publication_year')}
                     style={{ padding: '10px 10px', color: sortBy === 'publication_year' ? (isCiting ? 'var(--accent-primary)' : '#818cf8') : 'var(--text-main)', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span>Año</span>
+                      <span>{t('modals.citing.th_year')}</span>
                       {sortBy === 'publication_year' ? (sortOrder === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} opacity={0.3} />}
                     </div>
                   </th>
                   <th style={{ padding: '10px 10px', color: 'var(--text-main)', fontWeight: 700 }}>
-                    Autores / Afiliación
+                    {t('modals.citing.th_authors')}
                   </th>
                   <th style={{ padding: '10px 10px', color: 'var(--text-main)', fontWeight: 700 }}>
-                    Campo / Subcampo
+                    {t('modals.citing.th_field')}
                   </th>
                   <th
                     onClick={() => handleSort('cited_by_count')}
                     style={{ padding: '10px 10px', color: sortBy === 'cited_by_count' ? '#fbbf24' : 'var(--text-main)', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'right' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
-                      <span>Citas</span>
+                      <span>{t('modals.citing.th_citations')}</span>
                       {sortBy === 'cited_by_count' ? (sortOrder === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} opacity={0.3} />}
                     </div>
                   </th>
                   <th style={{ padding: '10px 10px', color: 'var(--text-main)', fontWeight: 700, textAlign: 'center' }}>
-                    Acceso
+                    {t('modals.citing.th_access')}
                   </th>
                 </tr>
               </thead>
@@ -583,7 +585,7 @@ export default function CitingWorksModal({
                     }}
                   >
                     <td style={{ padding: '10px 12px', verticalAlign: 'top' }}>
-                      <div style={{ fontWeight: 600, color: '#fff', marginBottom: '4px', lineHeight: 1.3 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: '4px', lineHeight: 1.3 }}>
                         {w.title}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.72rem', color: 'var(--text-dim)' }}>
@@ -653,22 +655,22 @@ export default function CitingWorksModal({
         {modalData.total_pages > 1 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', fontSize: '0.8rem', color: 'var(--text-dim)' }}>
             <span>
-              Página <strong>{page}</strong> de <strong>{modalData.total_pages}</strong> ({modalData.filtered_count?.toLocaleString()} obras)
+              {t('modals.citing.pagination_page', { page, totalPages: modalData.total_pages, count: modalData.filtered_count?.toLocaleString() })}
             </span>
             <div style={{ display: 'flex', gap: '4px' }}>
               <button
                 disabled={page <= 1}
                 onClick={() => setPage(p => Math.max(1, p - 1))}
-                style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: page <= 1 ? 'var(--text-muted)' : '#fff', cursor: page <= 1 ? 'not-allowed' : 'pointer' }}
+                style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)', color: page <= 1 ? 'var(--text-muted)' : 'var(--text-main)', cursor: page <= 1 ? 'not-allowed' : 'pointer' }}
               >
-                Anterior
+                {t('modals.citing.btn_prev')}
               </button>
               <button
                 disabled={page >= modalData.total_pages}
                 onClick={() => setPage(p => Math.min(modalData.total_pages, p + 1))}
-                style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: page >= modalData.total_pages ? 'var(--text-muted)' : '#fff', cursor: page >= modalData.total_pages ? 'not-allowed' : 'pointer' }}
+                style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)', color: page >= modalData.total_pages ? 'var(--text-muted)' : 'var(--text-main)', cursor: page >= modalData.total_pages ? 'not-allowed' : 'pointer' }}
               >
-                Siguiente
+                {t('modals.citing.btn_next')}
               </button>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import axios from 'axios'
+import { useI18n } from '../i18n'
 import {
   Search,
   Sparkles,
@@ -33,6 +34,7 @@ export default function ScopusControls({
   coverageStats,
   user
 }) {
+  const { t } = useI18n()
   const [subTab, setSubTab] = useState('assisted') // 'assisted' | 'advanced'
   const [asjcCatalog, setAsjcCatalog] = useState({ areas: [], subareas: [] })
   const [loadingCatalog, setLoadingCatalog] = useState(false)
@@ -189,10 +191,10 @@ export default function ScopusControls({
           </div>
           <div>
             <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, color: '#93c5fd' }}>
-              Motor de Búsqueda Scopus API (Elsevier)
+              {t('scopus.title')}
             </h3>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', margin: 0 }}>
-              Recupera documentos indizados en Scopus y enriquécelos automáticamente con los tópicos, ODS y métricas de OpenAlex.
+              {t('scopus.subtitle')}
             </p>
           </div>
         </div>
@@ -220,7 +222,7 @@ export default function ScopusControls({
               transition: 'all 0.2s ease'
             }}
           >
-            🎯 Asistente por Áreas ASJC
+            {t('scopus.tab_assisted')}
           </button>
           <button
             type="button"
@@ -237,7 +239,7 @@ export default function ScopusControls({
               transition: 'all 0.2s ease'
             }}
           >
-            📝 Query Avanzado Scopus
+            {t('scopus.tab_advanced')}
           </button>
         </div>
       </div>
@@ -257,11 +259,11 @@ export default function ScopusControls({
             {/* 1. Keyword Term */}
             <div>
               <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '5px', color: 'var(--text-main)' }}>
-                Términos en Título / Resumen / Keywords
+                {t('scopus.keyword_label')}
               </label>
               <input
                 type="text"
-                placeholder='Ej. "machine learning", dengue, renewable energy'
+                placeholder={t('scopus.keyword_placeholder')}
                 value={keywordTerm}
                 onChange={(e) => setKeywordTerm(e.target.value)}
                 style={{
@@ -279,7 +281,7 @@ export default function ScopusControls({
             {/* 2. Scopus Area (27) */}
             <div>
               <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '5px', color: 'var(--text-main)' }}>
-                Área de Investigación Scopus (27 Áreas)
+                {t('scopus.area_label')}
               </label>
               <select
                 value={selectedAreaCode}
@@ -297,7 +299,7 @@ export default function ScopusControls({
                   fontSize: '0.85rem'
                 }}
               >
-                <option value="">-- Toda Área Disciplinar --</option>
+                <option value="">{t('scopus.all_areas')}</option>
                 {asjcCatalog.areas.map(a => (
                   <option key={a.code} value={a.code}>
                     {a.code} - {a.name_es || a.name}
@@ -309,7 +311,7 @@ export default function ScopusControls({
             {/* 3. ASJC Subarea (334) */}
             <div>
               <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '5px', color: 'var(--text-main)' }}>
-                Sub-Área Específica ASJC (334 Códigos)
+                {t('scopus.subarea_label')}
               </label>
               <select
                 value={selectedSubareaCode}
@@ -324,7 +326,7 @@ export default function ScopusControls({
                   fontSize: '0.85rem'
                 }}
               >
-                <option value="">-- Sin sub-área específica --</option>
+                <option value="">{t('scopus.no_subarea')}</option>
                 {filteredSubareas.map(s => (
                   <option key={s.code} value={s.code}>
                     {s.code} - {s.name}
@@ -336,11 +338,11 @@ export default function ScopusControls({
             {/* 4. Country Filter */}
             <div>
               <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '5px', color: 'var(--text-main)' }}>
-                País de Afiliación (AFFILCOUNTRY)
+                {t('scopus.country_label')}
               </label>
               <input
                 type="text"
-                placeholder="Ej. Mexico, Brazil, Spain"
+                placeholder={t('scopus.country_placeholder')}
                 value={countryFilter}
                 onChange={(e) => setCountryFilter(e.target.value)}
                 style={{
@@ -375,7 +377,7 @@ export default function ScopusControls({
               }}
             >
               <Zap size={14} />
-              <span>Generar y Transferir al Query Scopus</span>
+              <span>{t('scopus.btn_generate_query')}</span>
             </button>
           </div>
         </div>
@@ -386,12 +388,12 @@ export default function ScopusControls({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
           <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Code2 size={16} style={{ color: '#60a5fa' }} />
-            <span>Consulta Scopus (Sintaxis Oficial Elsevier):</span>
+            <span>{t('scopus.query_label')}</span>
           </label>
 
           {/* Quick Presets */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>Plantillas Rápidas:</span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>{t('scopus.presets_label')}</span>
             <button
               type="button"
               onClick={() => handleLoadPreset('ai_mexico')}
@@ -511,7 +513,7 @@ export default function ScopusControls({
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-dim)' }}>
             <Calendar size={15} />
-            <span>Período:</span>
+            <span>{t('scopus.period_label')}</span>
           </div>
 
           <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
@@ -520,7 +522,7 @@ export default function ScopusControls({
               checked={allYears}
               onChange={(e) => setAllYears(e.target.checked)}
             />
-            <span>Todos los años</span>
+            <span>{t('scopus.all_years')}</span>
           </label>
 
           {!allYears && (
@@ -541,7 +543,7 @@ export default function ScopusControls({
                   fontSize: '0.8rem'
                 }}
               />
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>a</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>{t('scopus.to_year')}</span>
               <input
                 type="number"
                 min={1950}
@@ -586,12 +588,12 @@ export default function ScopusControls({
             {isEstimating ? (
               <>
                 <Loader2 size={15} className="animate-spin" />
-                <span>Estimando en Scopus...</span>
+                <span>{t('scopus.btn_estimating')}</span>
               </>
             ) : (
               <>
                 <Search size={15} />
-                <span>Estimar Volumen</span>
+                <span>{t('scopus.btn_estimate')}</span>
               </>
             )}
           </button>
@@ -619,12 +621,12 @@ export default function ScopusControls({
             {isSearching ? (
               <>
                 <Loader2 size={16} className="animate-spin" />
-                <span>Descargando y Cruzando con OpenAlex...</span>
+                <span>{t('scopus.btn_searching')}</span>
               </>
             ) : (
               <>
                 <Sparkles size={16} />
-                <span>Consultar y Cruzar con OpenAlex</span>
+                <span>{t('scopus.btn_search')}</span>
               </>
             )}
           </button>
@@ -666,11 +668,11 @@ export default function ScopusControls({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <CheckCircle2 size={18} style={{ color: '#34d399' }} />
             <span>
-              Volumen estimado en Scopus API: <strong style={{ fontSize: '1rem', color: '#fff' }}>{estimatedTotal.toLocaleString()}</strong> documentos encontrados.
+              {t('scopus.estimate_result', { count: estimatedTotal.toLocaleString() })}
             </span>
           </div>
           <span style={{ fontSize: '0.75rem', color: '#6ee7b7' }}>
-            Listo para descargar y cruzar con OpenAlex ClickHouse.
+            {t('scopus.estimate_ready')}
           </span>
         </div>
       )}
@@ -690,7 +692,7 @@ export default function ScopusControls({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Zap size={18} style={{ color: 'var(--accent-primary)' }} />
               <span style={{ fontSize: '0.88rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                Resultados del Cruce Scopus ➜ OpenAlex Local:
+                {t('scopus.coverage_title')}
               </span>
             </div>
             <span style={{
@@ -702,15 +704,15 @@ export default function ScopusControls({
               color: '#34d399',
               border: '1px solid rgba(16, 185, 129, 0.4)'
             }}>
-              {coverageStats.coverage_pct}% Cobertura
+              {t('scopus.coverage_badge', { pct: coverageStats.coverage_pct })}
             </span>
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-            <span>📥 Scopus (Total): <strong style={{ color: '#fff' }}>{coverageStats.scopus_total_found.toLocaleString()}</strong></span>
-            <span>⚡ OpenAlex (Enriquecidos): <strong style={{ color: '#38bdf8' }}>{coverageStats.matched_in_openalex.toLocaleString()}</strong></span>
+            <span>{t('scopus.scopus_total')} <strong style={{ color: '#fff' }}>{coverageStats.scopus_total_found.toLocaleString()}</strong></span>
+            <span>{t('scopus.openalex_matched')} <strong style={{ color: '#38bdf8' }}>{coverageStats.matched_in_openalex.toLocaleString()}</strong></span>
             {coverageStats.unmatched_dois_count > 0 && (
-              <span>⚠️ No identificados en OpenAlex: <strong style={{ color: '#fca5a5' }}>{coverageStats.unmatched_dois_count.toLocaleString()}</strong></span>
+              <span>{t('scopus.unmatched_dois')} <strong style={{ color: '#fca5a5' }}>{coverageStats.unmatched_dois_count.toLocaleString()}</strong></span>
             )}
           </div>
         </div>

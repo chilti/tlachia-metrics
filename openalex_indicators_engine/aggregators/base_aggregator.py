@@ -22,8 +22,98 @@ class BaseAggregator:
     def aggregate_recent(self, df: pd.DataFrame, min_docs: int = 1,
                          start_year: int = RECENT_PERIOD_START, end_year: int = RECENT_PERIOD_END) -> pd.DataFrame:
         """Calcula el reporte del periodo reciente (ej. 2021-2025)."""
+        return self.aggregate_period(df, start_year=start_year, end_year=end_year, min_docs=min_docs)
+
+    def aggregate_period(self, df: pd.DataFrame, start_year: int, end_year: int, min_docs: int = 1) -> pd.DataFrame:
+        """Calcula el reporte para una ventana temporal arbitraria [start_year, end_year]."""
+        if df is None or len(df) == 0:
+            return pd.DataFrame()
         df_rec = df[(df['publication_year'] >= start_year) & (df['publication_year'] <= end_year)]
         return self._aggregate_dataset(df_rec, min_docs=min_docs)
+
+    def aggregate_performance_matrix(self, df: pd.DataFrame, periods: List[Tuple[int, int]], min_docs: int = 1) -> pd.DataFrame:
+        """
+        Calcula la matriz comparativa de desempeño transversal y longitudinal
+        para periodos consecutivos, incluyendo variaciones interperíodo.
+        """
+        if df is None or len(df) == 0 or not periods:
+            return pd.DataFrame()
+
+        # 1. Agregación completa histórica como base de entidades y orden
+        full_df = self.aggregate_full(df, min_docs=min_docs)
+        if full_df.empty:
+            return pd.DataFrame()
+
+        # 2. Agregaciones para cada periodo consecutivo
+        period_dfs = {}
+        for (s_yr, e_yr) in periods:
+            p_label = f"{s_yr}-{e_yr}"
+            p_df = self.aggregate_period(df, start_year=s_yr, end_year=e_yr, min_docs=1)
+            if not p_df.empty and 'Name' in p_df.columns:
+                period_dfs[p_label] = p_df.set_index('Name')
+
+        matrix_rows = []
+        period_labels = [f"{s}-{e}" for s, e in periods]
+
+        for _, f_row in full_df.iterrows():
+            ent_name = f_row['Name']
+            row_dict = {
+                'Rank': f_row.get('Rank', 0),
+                'Name': ent_name,
+                'Total Documents': f_row.get('Documents', 0),
+                'Total Times Cited': f_row.get('Times Cited', 0),
+                'Total FWCI': f_row.get('Field-Weighted Citation Impact (FWCI)', 0.0),
+            }
+
+            prev_p_label = None
+            for p_label in period_labels:
+                p_data = period_dfs.get(p_label)
+                if p_data is not None and ent_name in p_data.index:
+                    ent_p = p_data.loc[ent_name]
+                    if isinstance(ent_p, pd.DataFrame):
+                        ent_p = ent_p.iloc[0]
+
+                    docs = int(ent_p.get('Documents', 0))
+                    cits = int(ent_p.get('Times Cited', 0))
+                    impact = float(ent_p.get('Citation Impact', 0.0))
+                    fwci = float(ent_p.get('Field-Weighted Citation Impact (FWCI)', 0.0))
+                    pct_top10 = float(ent_p.get('% Documents in Top 10%', 0.0))
+                    pct_diamond = float(ent_p.get('% Free to Read / Diamond Documents', 0.0))
+                    pct_intl = float(ent_p.get('% International Collaborations', 0.0))
+                    h_idx = int(ent_p.get('H-Index', 0))
+                else:
+                    docs, cits, impact, fwci, pct_top10, pct_diamond, pct_intl, h_idx = 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0
+
+                row_dict[f'Docs ({p_label})'] = docs
+                row_dict[f'Times Cited ({p_label})'] = cits
+                row_dict[f'Citation Impact ({p_label})'] = impact
+                row_dict[f'FWCI ({p_label})'] = fwci
+                row_dict[f'% Top 10% ({p_label})'] = pct_top10
+                row_dict[f'% Diamond ({p_label})'] = pct_diamond
+                row_dict[f'% International ({p_label})'] = pct_intl
+                row_dict[f'H-Index ({p_label})'] = h_idx
+
+                # Variación respecto al periodo previo
+                if prev_p_label is not None:
+                    prev_docs = row_dict.get(f'Docs ({prev_p_label})', 0)
+                    if prev_docs > 0:
+                        growth_docs = round(((docs - prev_docs) / prev_docs) * 100.0, 2)
+                    elif docs > 0:
+                        growth_docs = 100.0
+                    else:
+                        growth_docs = 0.0
+                    row_dict[f'Δ% Docs ({prev_p_label} → {p_label})'] = growth_docs
+
+                    prev_fwci = row_dict.get(f'FWCI ({prev_p_label})', 0.0)
+                    diff_fwci = round(fwci - prev_fwci, 3)
+                    row_dict[f'Δ FWCI ({prev_p_label} → {p_label})'] = diff_fwci
+
+                prev_p_label = p_label
+
+            matrix_rows.append(row_dict)
+
+        res_df = pd.DataFrame(matrix_rows)
+        return res_df
 
     def aggregate_trend(self, df: pd.DataFrame, min_docs_per_year: int = 1) -> pd.DataFrame:
         """Calcula la serie temporal anual (Trend) año por año para la entidad."""

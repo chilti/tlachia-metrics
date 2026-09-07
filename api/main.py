@@ -492,8 +492,13 @@ async def preview_ids(request: Request):
                     'authors': r.get('author_names', [])[:4] if isinstance(r.get('author_names'), list) else []
                 })
 
+        min_year = int(df['publication_year'].min()) if df is not None and len(df) > 0 and 'publication_year' in df.columns and pd.notna(df['publication_year'].min()) else None
+        max_year = int(df['publication_year'].max()) if df is not None and len(df) > 0 and 'publication_year' in df.columns and pd.notna(df['publication_year'].max()) else None
+
         return JSONResponse({
             'total': total,
+            'min_year': min_year,
+            'max_year': max_year,
             'limit': 50,
             'offset': 0,
             'results': sample
@@ -543,11 +548,16 @@ async def upload_corpus_preview(request: Request):
                     'authors': r.get('author_names', [])[:3] if isinstance(r.get('author_names'), list) else []
                 })
 
+        min_year = int(df['publication_year'].min()) if df is not None and len(df) > 0 and 'publication_year' in df.columns and pd.notna(df['publication_year'].min()) else None
+        max_year = int(df['publication_year'].max()) if df is not None and len(df) > 0 and 'publication_year' in df.columns and pd.notna(df['publication_year'].max()) else None
+
         return JSONResponse({
             'file_id': file_id,
             'filename': filename,
             'file_path': str(saved_path),
             'total_works': total,
+            'min_year': min_year,
+            'max_year': max_year,
             'sample_results': sample
         })
     except Exception as e:
@@ -721,10 +731,18 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
         with JOBS_LOCK:
             JOBS_STORE[job_id]['total_works'] = len(df)
 
-        # Ejecutar pipeline de 15 agregadores y 45 Excel + Parquets + JSON (sin generar ZIP automáticamente)
+        # Procesar configuración de periodos consecutivos y ventanas temporales
+        time_windows = payload.get('time_windows', {})
+        raw_periods = time_windows.get('periods') or payload.get('periods')
+        periods_list = None
+        if raw_periods and isinstance(raw_periods, list):
+            periods_list = [(int(p[0]), int(p[1])) for p in raw_periods if len(p) >= 2]
+
+        # Ejecutar pipeline de agregadores, Excel + Parquets + JSON (sin generar ZIP automáticamente)
         result = engine.process_and_export_package(
             df=df,
             package_name=package_name,
+            periods=periods_list,
             export_parquet=True,
             export_json=True,
             create_zip=False,
@@ -741,6 +759,9 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             'total_works': len(df),
             'source_mode': source_mode,
             'filters': payload.get('filters', {}),
+            'time_windows': time_windows,
+            'periods': result.get('periods', []),
+            'has_performance_matrix': result.get('has_performance_matrix', True),
             'ids_count': len(payload.get('ids', [])) if source_mode == 'ids' else None,
             'uploaded_file': payload.get('file_path') if source_mode == 'upload' else None,
             'created_at': datetime.now().isoformat(),
@@ -926,6 +947,9 @@ async def list_exported_packages(request: Request):
                         'filters': manifest_data.get('filters', {}),
                         'search_strategy': manifest_data.get('search_strategy', {}),
                         'tables_summary': manifest_data.get('tables_summary', {}),
+                        'periods': manifest_data.get('periods', []),
+                        'time_windows': manifest_data.get('time_windows', {}),
+                        'has_performance_matrix': manifest_data.get('has_performance_matrix', False),
                         'owner_orcid': pkg_owner_orcid,
                         'owner_name': pkg_owner_name,
                         'is_owner': (requester_orcid == pkg_owner_orcid) if requester_orcid else False,
@@ -957,17 +981,40 @@ async def generate_package_zip_endpoint(request: Request):
 
     # Recolectar archivos para el zip
     excel_dir = pkg_dir / "excel_reports"
+    parquet_dir = pkg_dir / "parquet_tables"
     json_file = pkg_dir / f"{package_name}_openalex_works.json"
     manifest_file = pkg_dir / "manifest.json"
+
+    # Si no existe la Matriz Consolidada multihistorial pero sí existen matrices individuales, generarla
+    master_matrix_path = excel_dir / 'Matriz_Desempeño_Longitudinal_Consolidada.xlsx'
+    if excel_dir.exists() and not master_matrix_path.exists():
+        perf_files = list(excel_dir.glob('*Performance Matrix.xlsx'))
+        if perf_files:
+            try:
+                import pandas as pd
+                from openalex_indicators_engine.exporters.excel_builder import save_styled_excel_multisheet
+                sheets = {}
+                for pf in perf_files:
+                    entity_name = pf.stem.replace(' Performance Matrix', '')
+                    sheets[entity_name] = pd.read_excel(pf)
+                if sheets:
+                    save_styled_excel_multisheet(sheets, master_matrix_path)
+                    logger.info(f"Matriz consolidada generada on-demand: {master_matrix_path}")
+            except Exception as e:
+                logger.warning(f"No se pudo generar Matriz_Desempeño_Longitudinal_Consolidada on-demand: {e}")
 
     files_to_zip = []
     if excel_dir.exists():
         files_to_zip.extend(list(excel_dir.glob('*.xlsx')))
+    if parquet_dir.exists():
+        files_to_zip.extend(list(parquet_dir.glob('*.parquet')))
     if json_file.exists():
         files_to_zip.append(json_file)
+    if manifest_file.exists():
+        files_to_zip.append(manifest_file)
 
     if not files_to_zip:
-        return JSONResponse({'error': 'No se encontraron reportes Excel o JSON para empaquetar.'}, status_code=400)
+        return JSONResponse({'error': 'No se encontraron reportes Excel, Parquet o JSON para empaquetar.'}, status_code=400)
 
     zip_path = pkg_dir / f"{package_name}.zip"
     try:
@@ -1114,13 +1161,23 @@ async def preview_table_endpoint(request: Request):
         return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
 
     # Normalizar período
-    period_clean = 'recent' if period in ('recent', '2021-2025') else ('trend' if period == 'trend' else 'full')
-    table_slug = TABLE_SLUG_MAP.get(table_id, table_id)
+    if period in ('performance_matrix', 'matrix', 'matriz', 'desempeno', 'desempeño'):
+        period_clean = 'performance_matrix'
+    elif period in ('recent', '2021-2025'):
+        period_clean = 'recent'
+    elif period in ('trend', 'anual'):
+        period_clean = 'trend'
+    elif period == 'full':
+        period_clean = 'full'
+    else:
+        period_clean = period.replace('-', '_')
 
-    parquet_path = target_dir / 'parquet_tables' / f"{table_slug}_{period_clean}.parquet"
+    table_slug = TABLE_SLUG_MAP.get(table_id, table_id)
+    parquet_dir = target_dir / 'parquet_tables'
+
+    parquet_path = parquet_dir / f"{table_slug}_{period_clean}.parquet"
     if not parquet_path.exists():
         # Búsqueda alternativa en directorio de tablas
-        parquet_dir = target_dir / 'parquet_tables'
         found = False
         if parquet_dir.exists():
             for f in parquet_dir.glob("*.parquet"):
@@ -1129,10 +1186,18 @@ async def preview_table_endpoint(request: Request):
                     found = True
                     break
         if not found:
-            return JSONResponse({
-                'error': f"Tabla '{table_id}' ({period_clean}) no encontrada en el paquete.",
-                'available_tables': AVAILABLE_INDICATOR_TABLES
-            }, status_code=404)
+            # Fallback para recent si no existe pero hay periodos
+            if period_clean == 'recent':
+                for f in sorted(parquet_dir.glob(f"{table_slug}_*.parquet")):
+                    if 'full' not in f.name and 'trend' not in f.name and 'matrix' not in f.name:
+                        parquet_path = f
+                        found = True
+                        break
+            if not found:
+                return JSONResponse({
+                    'error': f"Tabla '{table_id}' ({period_clean}) no encontrada en el paquete.",
+                    'available_tables': AVAILABLE_INDICATOR_TABLES
+                }, status_code=404)
 
     try:
         import pandas as pd
@@ -1164,6 +1229,29 @@ async def preview_table_endpoint(request: Request):
         records = page_df.to_dict(orient='records')
         columns = list(df.columns)
 
+        # Descubrir periodos disponibles dinámicamente en este paquete
+        available_periods = [{'id': 'full', 'label': 'Histórico Completo'}]
+
+        if (parquet_dir / f"{table_slug}_performance_matrix.parquet").exists() or any(f.name.endswith('_performance_matrix.parquet') for f in parquet_dir.glob("*.parquet")):
+            available_periods.append({'id': 'performance_matrix', 'label': 'Matriz de Desempeño'})
+
+        consecutive_periods = []
+        for p_file in sorted(parquet_dir.glob(f"{table_slug}_*.parquet")):
+            stem = p_file.stem
+            suffix = stem[len(table_slug)+1:]
+            if suffix not in ('full', 'trend', 'performance_matrix', 'recent'):
+                consecutive_periods.append(suffix)
+        
+        for cp in consecutive_periods:
+            display_label = cp.replace('_', '–')
+            available_periods.append({'id': cp, 'label': f'Periodo {display_label}'})
+
+        if not consecutive_periods and (parquet_dir / f"{table_slug}_recent.parquet").exists():
+            available_periods.append({'id': 'recent', 'label': 'Reciente (2021-2025)'})
+
+        if (parquet_dir / f"{table_slug}_trend.parquet").exists() or any(f.name.endswith('_trend.parquet') for f in parquet_dir.glob("*.parquet")):
+            available_periods.append({'id': 'trend', 'label': 'Tendencia Anual'})
+
         return JSONResponse({
             'package_name': package_name,
             'table_id': table_id,
@@ -1176,11 +1264,7 @@ async def preview_table_endpoint(request: Request):
             'columns': columns,
             'data': records,
             'available_tables': AVAILABLE_INDICATOR_TABLES,
-            'available_periods': [
-                {'id': 'full', 'label': 'Histórico Completo'},
-                {'id': 'recent', 'label': 'Reciente (2021-2025)'},
-                {'id': 'trend', 'label': 'Tendencia Anual'}
-            ]
+            'available_periods': available_periods
         })
     except Exception as e:
         logger.error(f"Error previsualizando tabla {table_id} en {package_name}: {e}")

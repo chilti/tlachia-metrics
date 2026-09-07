@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import axios from 'axios'
 import {
   Table as TableIcon,
@@ -23,6 +23,7 @@ import {
   BookOpen
 } from 'lucide-react'
 import CitingWorksModal from './CitingWorksModal'
+import { useI18n } from '../i18n'
 
 const resolveDownloadUrl = (url) => {
   if (!url) return ''
@@ -72,6 +73,8 @@ export default function TablePreviewTab({
   onRefreshPackages,
   user
 }) {
+  const { t } = useI18n()
+
   const [selectedPackage, setSelectedPackage] = useState(() => {
     return initialPackage || ''
   })
@@ -97,8 +100,36 @@ export default function TablePreviewTab({
     columns: [],
     data: [],
     total_rows: 0,
-    total_pages: 1
+    total_pages: 1,
+    available_periods: []
   })
+
+  // Dynamic available periods discovery
+  const effectivePeriodOptions = useMemo(() => {
+    if (tableData?.available_periods && tableData.available_periods.length > 0) {
+      return tableData.available_periods
+    }
+    const currentPkg = packages.find(p => getPkgName(p) === selectedPackage)
+    if (currentPkg?.periods && currentPkg.periods.length > 0) {
+      const opts = [{ id: 'full', label: 'Histórico Completo' }]
+      if (currentPkg.has_performance_matrix) {
+        opts.push({ id: 'performance_matrix', label: 'Matriz de Desempeño' })
+      }
+      currentPkg.periods.forEach(p => {
+        const id = p.replace('-', '_')
+        opts.push({ id, label: `Periodo ${p}` })
+      })
+      opts.push({ id: 'trend', label: 'Tendencia Anual' })
+      return opts
+    }
+    return PERIOD_OPTIONS
+  }, [tableData?.available_periods, packages, selectedPackage])
+
+  useEffect(() => {
+    if (effectivePeriodOptions.length > 0 && !effectivePeriodOptions.some(p => p.id === selectedPeriod)) {
+      setSelectedPeriod(effectivePeriodOptions[0].id)
+    }
+  }, [effectivePeriodOptions, selectedPeriod])
 
   // Sync initialPackage when passed from parent (e.g. clicking "Explorar Tablas" from a specific card)
   useEffect(() => {
@@ -192,7 +223,7 @@ export default function TablePreviewTab({
       if (onRefreshPackages) {
         await onRefreshPackages()
       }
-      alert(`¡Paquete .ZIP generado exitosamente (${res.data.zip_size_mb} MB)! Ya se encuentra disponible en tu Centro de Descargas.`)
+      alert(t('tables.zip_success', { size: res.data.zip_size_mb }))
       if (res.data.download_url) {
         const a = document.createElement('a')
         a.href = resolveDownloadUrl(res.data.download_url)
@@ -263,14 +294,14 @@ export default function TablePreviewTab({
           }}>
             <Loader2 size={30} color="var(--accent-primary)" className="animate-spin" />
           </div>
-          <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', marginBottom: '6px' }}>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '6px' }}>
             Cálculo de Indicadores en Curso
           </h3>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '20px' }}>
             Procesando el paquete <strong>{activeJob.package_name}</strong>. En unos momentos las tablas estarán listas para su exploración.
           </p>
 
-          <div style={{ background: 'rgba(0, 0, 0, 0.25)', padding: '14px 18px', borderRadius: '10px', marginBottom: '20px', border: '1px solid var(--border-subtle)' }}>
+          <div style={{ background: 'var(--bg-input)', padding: '14px 18px', borderRadius: '10px', marginBottom: '20px', border: '1px solid var(--border-subtle)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '8px' }}>
               <span style={{ color: 'var(--text-dim)' }}>{activeJob.stage_label}</span>
               <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)' }}>
@@ -289,7 +320,7 @@ export default function TablePreviewTab({
               onClick={onOpenJobModal}
             >
               <Eye size={15} />
-              <span>Ver Diálogo Completo</span>
+              <span>{t('tables.view_full_dialog')}</span>
             </button>
           )}
         </div>
@@ -300,10 +331,10 @@ export default function TablePreviewTab({
       <div className="card-panel" style={{ padding: '60px 20px', textAlign: 'center' }}>
         <FolderArchive size={48} color="var(--accent-primary)" style={{ margin: '0 auto 16px', opacity: 0.6 }} />
         <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px' }}>
-          No hay paquetes calculados aún
+          {t('tables.no_packages_yet_title')}
         </h3>
         <p style={{ color: 'var(--text-dim)', fontSize: '0.9rem', maxWidth: '450px', margin: '0 auto 20px' }}>
-          Conforma un corpus en la primera pestaña y presiona "Calcular Indicadores" para explorar interactivamente todas las tablas de entidades.
+          {t('tables.no_packages_yet_desc')}
         </p>
       </div>
     )
@@ -340,8 +371,8 @@ export default function TablePreviewTab({
               <Loader2 size={20} color="var(--accent-primary)" className="animate-spin" />
             </div>
             <div>
-              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Cálculo en curso: <strong>{activeJob.package_name}</strong></span>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>{t('tables.calculation_in_progress')} <strong>{activeJob.package_name}</strong></span>
                 <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.2)', color: 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>
                   {activeJob.progress}%
                 </span>
@@ -363,7 +394,7 @@ export default function TablePreviewTab({
                 onClick={onOpenJobModal}
               >
                 <Eye size={13} />
-                <span>Ver Diálogo</span>
+                <span>{t('tables.view_dialog')}</span>
               </button>
             )}
           </div>
@@ -398,8 +429,8 @@ export default function TablePreviewTab({
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: '#fff' }}>
-                Explorador de Tablas de Indicadores
+              <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
+                {t('tables.explorer_title')}
               </h2>
               {selectedPackage && (
                 <span style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.2)', color: 'var(--accent-primary)', fontWeight: 700 }}>
@@ -408,7 +439,7 @@ export default function TablePreviewTab({
               )}
             </div>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', margin: '2px 0 0' }}>
-              Visualizando indicadores calculados sobre el corpus. Puedes alternar entre las 16 entidades o volver al conformador manteniendo todos tus filtros intactos.
+              {t('tables.explorer_subtitle')}
             </p>
           </div>
         </div>
@@ -421,7 +452,7 @@ export default function TablePreviewTab({
               style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', padding: '8px 16px', fontWeight: 800, boxShadow: '0 2px 10px rgba(56, 189, 248, 0.3)' }}
             >
               <SlidersHorizontal size={15} />
-              <span>« Volver al Conformador</span>
+              <span>{t('tables.back_to_builder')}</span>
             </button>
           )}
           {onOpenDownloads && (
@@ -431,7 +462,7 @@ export default function TablePreviewTab({
               style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', padding: '8px 14px' }}
             >
               <FolderArchive size={15} />
-              <span>Centro de Descargas</span>
+              <span>{t('tables.download_center_btn')}</span>
             </button>
           )}
         </div>
@@ -444,7 +475,7 @@ export default function TablePreviewTab({
           {/* Package Selector */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
-              📦 Paquete de Indicadores
+              {t('tables.package_label')}
             </label>
             <select
               value={selectedPackage}
@@ -456,21 +487,21 @@ export default function TablePreviewTab({
                 width: '100%',
                 padding: '10px 14px',
                 borderRadius: '10px',
-                background: 'rgba(0, 0, 0, 0.25)',
+                background: 'var(--bg-input)',
                 border: selectedPackage ? '1px solid var(--border-color)' : '1px solid var(--accent-primary)',
                 color: selectedPackage ? 'var(--text-main)' : 'var(--accent-primary)',
                 fontSize: '0.9rem',
                 fontWeight: 600
               }}
             >
-              <option value="" style={{ background: '#1e293b', color: 'var(--text-dim)' }}>
-                {packages.length === 0 ? '-- No hay paquetes calculados --' : '-- Selecciona un paquete calculado --'}
+              <option value="" style={{ background: 'var(--table-header-bg)', color: 'var(--text-dim)' }}>
+                {packages.length === 0 ? t('tables.no_packages_calculated') : t('tables.select_package_placeholder')}
               </option>
               {packages.map(pkg => {
                 const pName = getPkgName(pkg)
                 return (
-                  <option key={pName} value={pName} style={{ background: '#1e293b', color: '#fff' }}>
-                    {pName} ({pkg.total_works?.toLocaleString() || 0} obras)
+                  <option key={pName} value={pName} style={{ background: 'var(--table-header-bg)', color: 'var(--text-main)' }}>
+                    {pName} ({pkg.total_works?.toLocaleString() || 0} {t('tables.works_count_suffix')})
                   </option>
                 )
               })}
@@ -480,7 +511,7 @@ export default function TablePreviewTab({
           {/* Table Entity Selector (Combo) */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
-              📊 Entidad / Tabla (16 Disponibles)
+              {t('tables.entity_label')}
             </label>
             <select
               value={selectedTable}
@@ -493,7 +524,7 @@ export default function TablePreviewTab({
                 width: '100%',
                 padding: '10px 14px',
                 borderRadius: '10px',
-                background: 'rgba(0, 0, 0, 0.25)',
+                background: 'var(--bg-input)',
                 border: '1px solid var(--accent-primary)',
                 color: 'var(--text-main)',
                 fontSize: '0.9rem',
@@ -501,8 +532,8 @@ export default function TablePreviewTab({
               }}
             >
               {TABLE_OPTIONS.map(tab => (
-                <option key={tab.id} value={tab.id} style={{ background: '#1e293b' }}>
-                  {tab.icon} {tab.name}
+                <option key={tab.id} value={tab.id} style={{ background: 'var(--table-header-bg)' }}>
+                  {tab.icon} {t('tables.entities.' + tab.id) || tab.name}
                 </option>
               ))}
             </select>
@@ -511,10 +542,10 @@ export default function TablePreviewTab({
           {/* Period Selector Pills */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
-              ⏳ Temporalidad
+              {t('tables.temporality_label')}
             </label>
-            <div style={{ display: 'flex', background: 'rgba(0, 0, 0, 0.25)', borderRadius: '10px', padding: '3px', border: '1px solid var(--border-color)' }}>
-              {PERIOD_OPTIONS.map(per => {
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', background: 'var(--bg-input)', borderRadius: '10px', padding: '4px', border: '1px solid var(--border-color)' }}>
+              {effectivePeriodOptions.map(per => {
                 const active = selectedPeriod === per.id
                 return (
                   <button
@@ -524,19 +555,20 @@ export default function TablePreviewTab({
                       setPage(1)
                     }}
                     style={{
-                      flex: 1,
-                      padding: '7px 8px',
+                      flex: '1 1 auto',
+                      padding: '6px 10px',
                       borderRadius: '7px',
                       border: 'none',
                       background: active ? 'var(--accent-primary)' : 'transparent',
                       color: active ? '#0f172a' : 'var(--text-dim)',
-                      fontWeight: active ? 800 : 500,
+                      fontWeight: active ? 800 : 600,
                       fontSize: '0.78rem',
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease'
+                      transition: 'all 0.15s ease',
+                      whiteSpace: 'nowrap'
                     }}
                   >
-                    {per.label}
+                    {per.id === 'full' ? t('tables.full_history') : (per.id === 'recent' ? t('tables.recent_period') : (per.id === 'trend' ? t('tables.annual_trend') : per.label))}
                   </button>
                 )
               })}
@@ -546,14 +578,14 @@ export default function TablePreviewTab({
           {/* Table Search & Export */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
-              🔍 Filtro Rápido en Tabla
+              {t('tables.quick_filter_label')}
             </label>
             <div style={{ display: 'flex', gap: '8px' }}>
               <div style={{ position: 'relative', flex: 1 }}>
                 <Search size={16} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '12px' }} />
                 <input
                   type="text"
-                  placeholder="Buscar en filas..."
+                  placeholder={t('tables.search_rows_placeholder')}
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value)
@@ -563,7 +595,7 @@ export default function TablePreviewTab({
                     width: '100%',
                     padding: '9px 12px 9px 36px',
                     borderRadius: '10px',
-                    background: 'rgba(0, 0, 0, 0.25)',
+                    background: 'var(--bg-input)',
                     border: '1px solid var(--border-color)',
                     color: 'var(--text-main)',
                     fontSize: '0.85rem'
@@ -572,7 +604,7 @@ export default function TablePreviewTab({
               </div>
               <button
                 onClick={handleExportCSV}
-                title="Exportar vista a CSV"
+                title={t('tables.export_csv_tooltip')}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -600,13 +632,13 @@ export default function TablePreviewTab({
       {!selectedPackage ? (
         <div className="glass-panel" style={{ padding: '60px 24px', textAlign: 'center', margin: '20px 0' }}>
           <FolderArchive size={48} color="var(--text-dim)" style={{ margin: '0 auto 16px' }} />
-          <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
-            Ningún paquete seleccionado para vista previa
+          <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '8px' }}>
+            {t('tables.empty_selection_title')}
           </h3>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: '500px', margin: '0 auto 20px', lineHeight: 1.6 }}>
             {packages.length > 0
-              ? 'Selecciona uno de tus paquetes en el menú superior "📦 Paquete de Indicadores" para explorar sus 16 tablas, o conforma un nuevo corpus.'
-              : 'Conforma un corpus en el Conformador y presiona "Calcular Métricas" para explorar sus 16 tablas analíticas aquí.'}
+              ? t('tables.empty_selection_desc_packages')
+              : t('tables.empty_selection_desc_empty')}
           </p>
           {onGoToBuilder && (
             <button
@@ -615,7 +647,7 @@ export default function TablePreviewTab({
               style={{ margin: '0 auto', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
             >
               <Search size={15} />
-              <span>Ir al Conformador de Corpus</span>
+              <span>{t('tables.go_to_builder')}</span>
             </button>
           )}
         </div>
@@ -630,10 +662,10 @@ export default function TablePreviewTab({
             </span>
             <div>
               <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
-                {TABLE_OPTIONS.find(t => t.id === selectedTable)?.name || selectedTable}
+                {t('tables.entities.' + selectedTable) || TABLE_OPTIONS.find(t => t.id === selectedTable)?.name || selectedTable}
               </h3>
               <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', margin: 0 }}>
-                {selectedPeriod === 'full' ? 'Periodo Completo' : (selectedPeriod === 'recent' ? 'Quinquenio Reciente 2021-2025' : 'Tendencia Anual')} • {tableData.total_rows.toLocaleString()} registros encontrados
+                {selectedPeriod === 'full' ? t('tables.full_history') : (selectedPeriod === 'recent' ? t('tables.recent_period') : t('tables.annual_trend'))} • {tableData.total_rows.toLocaleString()} {t('tables.records_found')}
               </p>
             </div>
           </div>
@@ -667,7 +699,7 @@ export default function TablePreviewTab({
                       title={`Descargar paquete comprimido (${currentPkgInfo.zip_size_mb} MB)`}
                     >
                       <Download size={13} />
-                      <span>Descargar .ZIP ({currentPkgInfo.zip_size_mb} MB)</span>
+                      <span>{t('tables.download_zip_btn', { size: currentPkgInfo.zip_size_mb })}</span>
                     </a>
 
                     <button
@@ -685,7 +717,7 @@ export default function TablePreviewTab({
                         fontSize: '0.75rem',
                         cursor: 'pointer'
                       }}
-                      title="Regenerar archivo .ZIP con los datos actuales"
+                      title={t('tables.regenerate_zip_tooltip')}
                     >
                       <RefreshCw size={12} className={generatingZip ? 'animate-spin' : ''} />
                     </button>
@@ -710,17 +742,17 @@ export default function TablePreviewTab({
                       cursor: 'pointer',
                       boxShadow: '0 2px 10px rgba(56, 189, 248, 0.25)'
                     }}
-                    title="Crear el paquete comprimido .ZIP con todos los 45 libros Excel y el JSON OpenAlex"
+                    title={t('tables.create_zip_tooltip')}
                   >
                     {generatingZip ? (
                       <>
                         <Loader2 size={13} className="animate-spin" />
-                        <span>Generando .ZIP...</span>
+                        <span>{t('tables.generating_zip')}</span>
                       </>
                     ) : (
                       <>
                         <FolderArchive size={14} />
-                        <span>📦 Generar Paquete .ZIP</span>
+                        <span>{t('tables.generate_zip_btn')}</span>
                       </>
                     )}
                   </button>
@@ -747,7 +779,7 @@ export default function TablePreviewTab({
                 title="Regresar a modificar filtros y recalcular"
               >
                 <Search size={13} />
-                <span>Refinar Corpus</span>
+                <span>{t('tables.refine_corpus_btn')}</span>
               </button>
             )}
 
@@ -770,7 +802,7 @@ export default function TablePreviewTab({
                 title="Ir al Centro de Descargas para descargar el paquete .ZIP"
               >
                 <Download size={13} />
-                <span>Ir a Descargas</span>
+                <span>{t('tables.go_to_downloads')}</span>
               </button>
             )}
 
@@ -792,7 +824,7 @@ export default function TablePreviewTab({
               title="Explorar todos los artículos citantes de este corpus"
             >
               <Sparkles size={14} />
-              <span>Citantes del Corpus</span>
+              <span>{t('tables.citing_corpus_btn')}</span>
             </button>
 
             <button
@@ -813,13 +845,13 @@ export default function TablePreviewTab({
               title="Explorar las referencias bibliográficas que fundamentan la totalidad de este corpus"
             >
               <BookOpen size={14} />
-              <span>Base Intelectual</span>
+              <span>{t('tables.intellectual_base_btn')}</span>
             </button>
 
             {/* Pagination Top Indicator */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '4px' }}>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-                Pág. <strong>{tableData.page}</strong> / <strong>{tableData.total_pages}</strong>
+                <span>{t('tables.page_label', { current: tableData.page, total: tableData.total_pages })}</span>
               </span>
               <div style={{ display: 'flex', gap: '4px' }}>
                 <button
@@ -859,7 +891,7 @@ export default function TablePreviewTab({
         {loading && (
           <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--accent-primary)' }}>
             <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 12px' }} />
-            <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>Cargando datos de la tabla...</p>
+            <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>{t('tables.loading_table')}</p>
           </div>
         )}
 
@@ -874,7 +906,7 @@ export default function TablePreviewTab({
         {!loading && !error && tableData.data && (
           <div style={{ overflowX: 'auto', maxHeight: '600px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
-              <thead style={{ position: 'sticky', top: 0, background: '#1e293b', zIndex: 10, borderBottom: '2px solid var(--border-color)' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--table-header-bg)', zIndex: 10, borderBottom: '2px solid var(--border-color)' }}>
                 <tr>
                   {tableData.columns.map((col, idx) => {
                     const isSorted = sortBy === col
@@ -979,7 +1011,7 @@ export default function TablePreviewTab({
         {!loading && !error && tableData.total_pages > 1 && (
           <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 0, 0, 0.15)' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-              Mostrando registros <strong>{((page - 1) * pageSize) + 1}</strong> a <strong>{Math.min(page * pageSize, tableData.total_rows)}</strong> de <strong>{tableData.total_rows.toLocaleString()}</strong>
+              <span>{t('tables.showing_records', { start: ((page - 1) * pageSize) + 1, end: Math.min(page * pageSize, tableData.total_rows), total: tableData.total_rows.toLocaleString() })}</span>
             </span>
             <div style={{ display: 'flex', gap: '6px' }}>
               <button
@@ -995,7 +1027,7 @@ export default function TablePreviewTab({
                   cursor: page <= 1 ? 'not-allowed' : 'pointer'
                 }}
               >
-                Primera
+                {t('tables.first_page')}
               </button>
               <button
                 disabled={page <= 1}
@@ -1010,7 +1042,7 @@ export default function TablePreviewTab({
                   cursor: page <= 1 ? 'not-allowed' : 'pointer'
                 }}
               >
-                Anterior
+                {t('tables.prev_page')}
               </button>
               <span style={{ display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: '0.8rem', fontWeight: 700 }}>
                 {page} / {tableData.total_pages}
@@ -1028,7 +1060,7 @@ export default function TablePreviewTab({
                   cursor: page >= tableData.total_pages ? 'not-allowed' : 'pointer'
                 }}
               >
-                Siguiente
+                {t('tables.next_page')}
               </button>
               <button
                 disabled={page >= tableData.total_pages}
@@ -1043,7 +1075,7 @@ export default function TablePreviewTab({
                   cursor: page >= tableData.total_pages ? 'not-allowed' : 'pointer'
                 }}
               >
-                Última
+                {t('tables.last_page')}
               </button>
             </div>
           </div>

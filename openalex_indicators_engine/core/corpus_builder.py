@@ -456,10 +456,12 @@ class CorpusBuilder:
         clauses = self._build_where_clauses(filters)
         where_sql = " AND ".join(clauses) if clauses else "1=1"
         
-        # Conteo total
-        count_sql = f"SELECT count(*) as total FROM works_flat WHERE {where_sql}"
+        # Conteo total y rango temporal
+        count_sql = f"SELECT count(*) as total, min(publication_year) as min_year, max(publication_year) as max_year FROM works_flat WHERE {where_sql}"
         df_count = self.engine.query_df(count_sql)
         total_works = int(df_count.iloc[0]['total']) if len(df_count) > 0 else 0
+        min_year = int(df_count.iloc[0]['min_year']) if len(df_count) > 0 and pd.notna(df_count.iloc[0]['min_year']) else None
+        max_year = int(df_count.iloc[0]['max_year']) if len(df_count) > 0 and pd.notna(df_count.iloc[0]['max_year']) else None
 
         # Muestra ordenada por citas descendentes
         cols = [
@@ -495,6 +497,8 @@ class CorpusBuilder:
 
         return {
             'total': total_works,
+            'min_year': min_year,
+            'max_year': max_year,
             'limit': limit,
             'offset': offset,
             'page': (offset // limit) + 1 if limit > 0 else 1,

@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { X, ExternalLink, Loader2, CheckCircle, ShieldCheck, Sparkles, FolderArchive, Lock } from 'lucide-react';
+import { useI18n } from '../i18n';
 
 export default function OrcidLoginModal({ isOpen, onClose, reason = 'general' }) {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -102,17 +104,15 @@ export default function OrcidLoginModal({ isOpen, onClose, reason = 'general' })
           </div>
 
           <h2 style={{ fontSize: '1.35rem', fontWeight: '800', marginBottom: '8px' }}>
-            Autenticación de Investigador
+            {t('modals.orcid.title')}
           </h2>
 
           <p style={{ fontSize: '0.9rem', color: 'var(--text-dim, #9ca3af)', lineHeight: '1.5' }}>
-            {reason === 'job_creation' ? (
-              <>Para conformar corpus y generar paquetes de 45 indicadores analíticos, conecta tu identificador oficial de <strong>ORCID</strong>.</>
-            ) : reason === 'downloads' ? (
-              <>Tu <strong>Centro de Descargas</strong> personal guarda y organiza tus paquetes .ZIP asociados a tu registro de investigador.</>
-            ) : (
-              <>Identifícate con tu cuenta <strong>ORCID</strong> para acceder a los servicios de cómputo analítico y descarga de corpus en TlachIA Metrics.</>
-            )}
+            {reason === 'job_creation'
+              ? t('modals.orcid.reason_job')
+              : reason === 'downloads'
+              ? t('modals.orcid.reason_downloads')
+              : t('modals.orcid.reason_general')}
           </p>
         </div>
 
@@ -131,15 +131,15 @@ export default function OrcidLoginModal({ isOpen, onClose, reason = 'general' })
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <FolderArchive size={16} color="var(--accent-primary, #38bdf8)" />
-            <span><strong>Centro de Descargas Exclusivo:</strong> Acceso a tus paquetes generados.</span>
+            <span>{t('modals.orcid.benefit_downloads')}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Sparkles size={16} color="#a6ce39" />
-            <span><strong>Cálculo de 45 Indicadores:</strong> Excel y Parquets automáticos.</span>
+            <span>{t('modals.orcid.benefit_indicators')}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <ShieldCheck size={16} color="#10b981" />
-            <span><strong>Acceso Verificado:</strong> Whitelist restringida por padrón institucional.</span>
+            <span>{t('modals.orcid.benefit_verified')}</span>
           </div>
         </div>
 
@@ -184,19 +184,19 @@ export default function OrcidLoginModal({ isOpen, onClose, reason = 'general' })
           {loading ? (
             <>
               <Loader2 size={18} className="animate-spin" />
-              <span>Conectando con ORCID...</span>
+              <span>{t('modals.orcid.connecting')}</span>
             </>
           ) : (
             <>
               <span style={{ fontWeight: '900', fontSize: '18px' }}>iD</span>
-              <span>Conectar con ORCID</span>
+              <span>{t('modals.orcid.connect_btn')}</span>
               <ExternalLink size={16} />
             </>
           )}
         </button>
 
         <p style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-dim, #9ca3af)', margin: 0 }}>
-          Solo se solicitarán permisos de lectura pública para validar tu identidad académica.
+          {t('modals.orcid.disclaimer')}
         </p>
       </div>
     </div>

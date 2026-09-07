@@ -44,6 +44,10 @@ import TablePreviewTab from './components/TablePreviewTab'
 import CorpusManagerModal from './components/CorpusManagerModal'
 import CitingWorksModal from './components/CitingWorksModal'
 import ScopusControls from './components/ScopusControls'
+import MetricsConfigTab from './components/MetricsConfigTab'
+import { useI18n } from './i18n'
+import LanguageSelector from './components/LanguageSelector'
+import ThemeToggle from './components/ThemeToggle'
 
 const API_BASE = ''
 
@@ -67,6 +71,32 @@ const loadSessionState = (key, fallback) => {
 }
 
 export default function App() {
+  const { t, lang } = useI18n()
+
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tlachia_theme')
+      if (saved === 'light' || saved === 'dark') return saved
+      if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        return 'light'
+      }
+      return 'dark'
+    } catch {
+      return 'dark'
+    }
+  })
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try {
+      localStorage.setItem('tlachia_theme', theme)
+    } catch {}
+  }, [theme])
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))
+  }
+
   const [activeTab, setActiveTab] = useState(() => loadSessionState('activeTab', 'builder')) // 'builder' | 'tables' | 'downloads'
   const [searchMode, setSearchMode] = useState(() => loadSessionState('searchMode', 'filters')) // 'filters' | 'ids' | 'upload'
 
@@ -148,6 +178,12 @@ export default function App() {
   const [packageName, setPackageName] = useState(() => loadSessionState('packageName', 'Mi_Corpus_TlachIA'))
   const [activeJob, setActiveJob] = useState(null)
   const [jobModalOpen, setJobModalOpen] = useState(false)
+  const [timeWindowsConfig, setTimeWindowsConfig] = useState(() => loadSessionState('timeWindowsConfig', {
+    windowSize: 5,
+    windowMode: 'consecutive',
+    anchorDirection: 'end',
+    minDocs: 1
+  }))
 
   // Duplicate Corpus Validation State
   const [lastCalculatedSignature, setLastCalculatedSignature] = useState(null)
@@ -231,6 +267,7 @@ export default function App() {
       sessionStorage.setItem('tlachia_isScopusMode', JSON.stringify(isScopusMode))
       sessionStorage.setItem('tlachia_scopusQuery', JSON.stringify(scopusQuery))
       sessionStorage.setItem('tlachia_scopusCoverageStats', JSON.stringify(scopusCoverageStats))
+      sessionStorage.setItem('tlachia_timeWindowsConfig', JSON.stringify(timeWindowsConfig))
     } catch (e) {
       console.warn('Could not persist session state:', e)
     }
@@ -239,7 +276,7 @@ export default function App() {
     selectedTopics, topicLogic, selectedSources, selectedInstitutions, institutionLogic,
     selectedAuthors, authorLogic, selectedCountries, countryLogic, selectedTypes,
     startYear, endYear, allYears, oaStatus, idsText, hasSearched, previewData, packageName,
-    loadedCorpusMetadata, isScopusMode, scopusQuery, scopusCoverageStats
+    loadedCorpusMetadata, isScopusMode, scopusQuery, scopusCoverageStats, timeWindowsConfig
   ])
 
   // Check API Health & Scopus Availability
@@ -930,7 +967,7 @@ export default function App() {
   }
 
   // Launch Metrics Computation Job
-  const handleLaunchCalculation = async (force = false, skipMassiveWarning = false) => {
+  const handleLaunchCalculation = async (force = false, skipMassiveWarning = false, extraConfig = null) => {
     // Verificar que el usuario esté autenticado para procesar
     if (!user?.orcid) {
       setLoginModalReason('job_creation')
@@ -951,10 +988,25 @@ export default function App() {
 
     const built = buildCorpusPayload()
     if (!built) return
-    const { payload, signature } = built
+    const { payload } = built
 
     payload.user_orcid = user.orcid
     payload.user_name = user.name || user.orcid
+
+    if (extraConfig?.time_windows) {
+      payload.time_windows = extraConfig.time_windows
+    } else if (timeWindowsConfig?.periods) {
+      payload.time_windows = timeWindowsConfig
+    }
+
+    const signature = JSON.stringify({
+      package_name: payload.package_name,
+      source_mode: payload.source_mode,
+      filters: payload.filters,
+      ids: payload.ids,
+      file_path: payload.file_path,
+      time_windows: payload.time_windows || null
+    })
 
     // Validar si ya hay un trabajo en ejecución
     if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) {
@@ -1076,7 +1128,7 @@ export default function App() {
             <div>
               <h1 className="brand-title">TlachIA Metrics</h1>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
-                Motor Cienciométrico OpenAlex ClickHouse
+                {t('app.subtitle')}
               </p>
             </div>
           </div>
@@ -1087,21 +1139,28 @@ export default function App() {
               onClick={() => setActiveTab('builder')}
             >
               <Layers size={16} />
-              Conformador de Corpus
+              {t('nav.corpus_builder')}
+            </button>
+            <button
+              className={`nav-tab ${activeTab === 'metrics' ? 'active' : ''}`}
+              onClick={() => setActiveTab('metrics')}
+            >
+              <SlidersHorizontal size={16} />
+              {t('nav.metrics_config')}
             </button>
             <button
               className={`nav-tab ${activeTab === 'tables' ? 'active' : ''}`}
               onClick={() => setActiveTab('tables')}
             >
               <FileSpreadsheet size={16} />
-              Vista de Tablas
+              {t('nav.table_preview')}
             </button>
             <button
               className={`nav-tab ${activeTab === 'downloads' ? 'active' : ''}`}
               onClick={() => setActiveTab('downloads')}
             >
               <FolderArchive size={16} />
-              Centro de Descargas
+              {t('nav.downloads_center')}
               {packages.length > 0 && (
                 <span style={{
                   background: 'var(--accent-primary)',
@@ -1117,7 +1176,10 @@ export default function App() {
             </button>
           </nav>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <LanguageSelector />
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{
                 width: '8px',
@@ -1127,7 +1189,7 @@ export default function App() {
                 boxShadow: apiOnline ? '0 0 8px #10b981' : 'none'
               }} />
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {apiOnline ? 'ClickHouse Online' : 'API Offline'}
+                {apiOnline ? t('app.clickhouse_online') : t('app.api_offline')}
               </span>
             </div>
 
@@ -1167,14 +1229,14 @@ export default function App() {
                       {user.name}
                     </span>
                     <span style={{ fontSize: '0.66rem', color: user.is_admin ? '#38bdf8' : 'var(--text-dim)' }}>
-                      {user.is_admin ? '⚡ Administrador' : 'Investigador'}
+                      {user.is_admin ? `⚡ ${t('auth.admin')}` : t('auth.researcher')}
                     </span>
                   </div>
                 </div>
 
                 <button
                   onClick={handleLogout}
-                  title="Cerrar sesión"
+                  title={t('auth.logout')}
                   style={{
                     background: 'rgba(239, 68, 68, 0.1)',
                     border: '1px solid rgba(239, 68, 68, 0.3)',
@@ -1212,7 +1274,7 @@ export default function App() {
                 }}
               >
                 <span style={{ fontWeight: '900', fontSize: '13px' }}>iD</span>
-                <span>Conectar ORCID</span>
+                <span>{t('auth.connect_orcid')}</span>
               </button>
             )}
           </div>
@@ -1235,6 +1297,23 @@ export default function App() {
               user={user}
             />
           </div>
+        ) : activeTab === 'metrics' ? (
+          <div style={{ marginTop: '24px', marginBottom: '48px' }}>
+            <MetricsConfigTab
+              previewData={previewData}
+              packageName={packageName}
+              setPackageName={setPackageName}
+              timeWindowsConfig={timeWindowsConfig}
+              setTimeWindowsConfig={setTimeWindowsConfig}
+              onLaunchCalculation={(extraCfg) => handleLaunchCalculation(false, false, extraCfg)}
+              onGoToBuilder={() => setActiveTab('builder')}
+              user={user}
+              onOpenLoginModal={() => {
+                setLoginModalReason('job_creation')
+                setLoginModalOpen(true)
+              }}
+            />
+          </div>
         ) : activeTab === 'builder' ? (
           <div className="main-layout">
             {/* Sidebar Filters */}
@@ -1242,7 +1321,7 @@ export default function App() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '12px' }}>
                 <span style={{ fontWeight: 700, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <SlidersHorizontal size={18} color="var(--accent-primary)" />
-                  Filtros del Corpus
+                  {t('builder.sidebar_title')}
                 </span>
                 <div style={{ display: 'flex', gap: '4px' }}>
                   <button
@@ -1257,9 +1336,9 @@ export default function App() {
                       setCorpusManagerMode('save')
                       setCorpusManagerModalOpen(true)
                     }}
-                    title="Guardar este corpus"
+                    title={t('builder.save_corpus_tooltip')}
                   >
-                    💾 Guardar
+                    {t('builder.save_corpus_btn')}
                   </button>
                   <button
                     className="btn-outline"
@@ -1273,25 +1352,25 @@ export default function App() {
                       setCorpusManagerMode('list')
                       setCorpusManagerModalOpen(true)
                     }}
-                    title="Mis corpus guardados"
+                    title={t('builder.my_corpora_tooltip')}
                   >
-                    📂 Mis Corpus
+                    {t('builder.my_corpora_btn')}
                   </button>
                   <button
                     className="btn-outline"
                     style={{ padding: '4px 7px', fontSize: '0.72rem', borderRadius: '6px' }}
                     onClick={handleResetCorpus}
-                    title="Limpiar filtros y crear nuevo corpus"
+                    title={t('builder.new_corpus_tooltip')}
                   >
-                    ✨ Nuevo
+                    {t('builder.new_corpus_btn')}
                   </button>
                 </div>
               </div>
 
               {/* Search Mode Selector */}
               <div className="filter-group">
-                <label className="filter-label">Modo de Conformación</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px', background: '#0e1526', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                <label className="filter-label">{t('builder.mode_selector_label')}</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px', background: 'var(--bg-input)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                   <button
                     onClick={() => setSearchMode('filters')}
                     style={{
@@ -1305,7 +1384,7 @@ export default function App() {
                       color: searchMode === 'filters' ? '#000' : 'var(--text-muted)'
                     }}
                   >
-                    Filtros
+                    {t('builder.mode_filters')}
                   </button>
                   <button
                     onClick={() => setSearchMode('ids')}
@@ -1320,7 +1399,7 @@ export default function App() {
                       color: searchMode === 'ids' ? '#000' : 'var(--text-muted)'
                     }}
                   >
-                    IDs / DOIs
+                    {t('builder.mode_ids')}
                   </button>
                   <button
                     onClick={() => setSearchMode('upload')}
@@ -1335,7 +1414,7 @@ export default function App() {
                       color: searchMode === 'upload' ? '#000' : 'var(--text-muted)'
                     }}
                   >
-                    Subir
+                    {t('builder.mode_upload')}
                   </button>
                 </div>
               </div>
@@ -1344,7 +1423,7 @@ export default function App() {
                 <>
                   {/* Entity Chips Selectors */}
                   <div className="filter-group">
-                    <label className="filter-label">Taxonomía y Clasificación (4 Niveles)</label>
+                    <label className="filter-label">{t('builder.taxonomy_title')}</label>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {/* 1. Domains */}
                       <div>
@@ -1354,7 +1433,7 @@ export default function App() {
                           onClick={() => openEntityModal('domain')}
                         >
                           <Compass size={16} color="#38bdf8" />
-                          🌐 + Dominio ({selectedDomains.length})
+                          {t('builder.add_domain')} ({selectedDomains.length})
                         </button>
                         {selectedDomains.length > 0 && (
                           <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
@@ -1376,7 +1455,7 @@ export default function App() {
                           onClick={() => openEntityModal('field')}
                         >
                           <Compass size={16} color="#818cf8" />
-                          🔬 + Campo ({selectedFields.length})
+                          {t('builder.add_field')} ({selectedFields.length})
                         </button>
                         {selectedFields.length > 0 && (
                           <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
@@ -1398,7 +1477,7 @@ export default function App() {
                           onClick={() => openEntityModal('subfield')}
                         >
                           <Compass size={16} color="#c084fc" />
-                          🔍 + Subcampo ({selectedSubfields.length})
+                          {t('builder.add_subfield')} ({selectedSubfields.length})
                         </button>
                         {selectedSubfields.length > 0 && (
                           <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
@@ -1420,7 +1499,7 @@ export default function App() {
                           onClick={() => openEntityModal('topic')}
                         >
                           <Compass size={16} color="var(--accent-primary)" />
-                          🏷️ + Tópico ({selectedTopics.length})
+                          {t('builder.add_topic')} ({selectedTopics.length})
                         </button>
                         {selectedTopics.length > 0 && (
                           <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1434,20 +1513,20 @@ export default function App() {
                             </div>
                             {selectedTopics.length > 1 && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>
-                                <span>Operador:</span>
+                                <span>{t('builder.operator_label')}</span>
                                 <button
                                   type="button"
                                   onClick={() => setTopicLogic('OR')}
                                   style={{ background: topicLogic === 'OR' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: topicLogic === 'OR' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
                                 >
-                                  OR
+                                  {t('builder.operator_or')}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setTopicLogic('AND')}
                                   style={{ background: topicLogic === 'AND' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: topicLogic === 'AND' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
                                 >
-                                  AND
+                                  {t('builder.operator_and')}
                                 </button>
                               </div>
                             )}
@@ -1459,7 +1538,7 @@ export default function App() {
 
                   {/* Entity Chips Selectors: Sources, Insts, Authors */}
                   <div className="filter-group">
-                    <label className="filter-label">Fuentes, Instituciones y Autores</label>
+                    <label className="filter-label">{t('builder.sources_inst_auth_title')}</label>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {/* Sources */}
                       <div>
@@ -1469,7 +1548,7 @@ export default function App() {
                           onClick={() => openEntityModal('source')}
                         >
                           <BookOpen size={16} color="#fbbf24" />
-                          + Filtrar por Revista / Fuente ({selectedSources.length})
+                          {t('builder.add_source')} ({selectedSources.length})
                         </button>
                         {selectedSources.length > 0 && (
                           <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
@@ -1491,7 +1570,7 @@ export default function App() {
                           onClick={() => openEntityModal('institution')}
                         >
                           <Building2 size={16} color="#34d399" />
-                          + Filtrar por Institución ({selectedInstitutions.length})
+                          {t('builder.add_institution')} ({selectedInstitutions.length})
                         </button>
                         {selectedInstitutions.length > 0 && (
                           <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1505,20 +1584,20 @@ export default function App() {
                             </div>
                             {selectedInstitutions.length > 1 && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>
-                                <span>Operador:</span>
+                                <span>{t('builder.operator_label')}</span>
                                 <button
                                   type="button"
                                   onClick={() => setInstitutionLogic('OR')}
                                   style={{ background: institutionLogic === 'OR' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: institutionLogic === 'OR' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
                                 >
-                                  OR (Unión)
+                                  {t('builder.operator_or_union')}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setInstitutionLogic('AND')}
                                   style={{ background: institutionLogic === 'AND' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: institutionLogic === 'AND' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
                                 >
-                                  AND (Co-afiliación)
+                                  {t('builder.operator_and_colab')}
                                 </button>
                               </div>
                             )}
@@ -1534,7 +1613,7 @@ export default function App() {
                           onClick={() => openEntityModal('author')}
                         >
                           <Users size={16} color="#a78bfa" />
-                          + Filtrar por Investigador ({selectedAuthors.length})
+                          {t('builder.add_author')} ({selectedAuthors.length})
                         </button>
                         {selectedAuthors.length > 0 && (
                           <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1548,20 +1627,20 @@ export default function App() {
                             </div>
                             {selectedAuthors.length > 1 && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>
-                                <span>Operador:</span>
+                                <span>{t('builder.operator_label')}</span>
                                 <button
                                   type="button"
                                   onClick={() => setAuthorLogic('OR')}
                                   style={{ background: authorLogic === 'OR' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: authorLogic === 'OR' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
                                 >
-                                  OR
+                                  {t('builder.operator_or')}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setAuthorLogic('AND')}
                                   style={{ background: authorLogic === 'AND' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', color: authorLogic === 'AND' ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: 600 }}
                                 >
-                                  AND (Coautoría)
+                                  {t('builder.operator_and_coauth')}
                                 </button>
                               </div>
                             )}
@@ -1573,14 +1652,14 @@ export default function App() {
 
                   {/* Countries Multiselect Catalog */}
                   <div className="filter-group">
-                    <label className="filter-label">Países de Afiliación (Catálogo)</label>
+                    <label className="filter-label">{t('builder.countries_title')}</label>
                     <button
                       className="btn btn-secondary"
                       style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
                       onClick={() => openEntityModal('country')}
                     >
                       <Globe2 size={16} color="#38bdf8" />
-                      + Agregar País ({selectedCountries.length})
+                      {t('builder.add_country')} ({selectedCountries.length})
                     </button>
                     {selectedCountries.length > 0 && (
                       <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -1596,8 +1675,8 @@ export default function App() {
                         </div>
 
                         {selectedCountries.length > 1 && (
-                          <div style={{ background: '#0e1526', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.72rem' }}>
-                            <span style={{ color: 'var(--text-dim)' }}>Lógica de Países:</span>
+                          <div style={{ background: 'var(--bg-input)', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.72rem' }}>
+                            <span style={{ color: 'var(--text-dim)' }}>{t('builder.country_logic_label')}</span>
                             <div style={{ display: 'flex', gap: '4px' }}>
                               <button
                                 type="button"
@@ -1613,7 +1692,7 @@ export default function App() {
                                   cursor: 'pointer'
                                 }}
                               >
-                                OR (Unión)
+                                {t('builder.country_logic_or')}
                               </button>
                               <button
                                 type="button"
@@ -1629,7 +1708,7 @@ export default function App() {
                                   cursor: 'pointer'
                                 }}
                               >
-                                AND (Colaboración)
+                                {t('builder.country_logic_and')}
                               </button>
                             </div>
                           </div>
@@ -1641,14 +1720,14 @@ export default function App() {
                   {/* Year Range */}
                   <div className="filter-group">
                     <label className="filter-label">
-                      <span>Rango Temporal</span>
+                      <span>{t('builder.time_range_title')}</span>
                       <span style={{ color: 'var(--accent-primary)', fontSize: '0.75rem' }}>
-                        {allYears ? 'Todo (Histórico)' : `${startYear} — ${endYear}`}
+                        {allYears ? t('builder.all_history_badge') : `${startYear} — ${endYear}`}
                       </span>
                     </label>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', opacity: allYears ? 0.45 : 1 }}>
                       <div>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Desde:</span>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{t('builder.from_year')}</span>
                         <input
                           type="number"
                           className="input-text"
@@ -1660,7 +1739,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Hasta:</span>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{t('builder.to_year')}</span>
                         <input
                           type="number"
                           className="input-text"
@@ -1681,21 +1760,21 @@ export default function App() {
                           onChange={(e) => setAllYears(e.target.checked)}
                           style={{ cursor: user ? 'pointer' : 'not-allowed', accentColor: 'var(--accent-primary)', width: '15px', height: '15px' }}
                         />
-                        <span>Todo (Histórico completo)</span>
+                        <span>{t('builder.all_history_checkbox')}</span>
                       </label>
                     </div>
                   </div>
 
                   {/* Document Types Multiselect Catalog */}
                   <div className="filter-group">
-                    <label className="filter-label">Tipo de Documento (Catálogo)</label>
+                    <label className="filter-label">{t('builder.doc_type_title')}</label>
                     <button
                       className="btn btn-secondary"
                       style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.8rem', padding: '8px 12px' }}
                       onClick={() => openEntityModal('work_type')}
                     >
                       <FileText size={16} color="#fb7185" />
-                      + Tipo de Documento ({selectedTypes.length})
+                      {t('builder.add_doc_type')} ({selectedTypes.length})
                     </button>
                     {selectedTypes.length > 0 && (
                       <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
@@ -1713,19 +1792,19 @@ export default function App() {
 
                   {/* Open Access Status */}
                   <div className="filter-group">
-                    <label className="filter-label">Vía de Acceso Abierto</label>
+                    <label className="filter-label">{t('builder.oa_title')}</label>
                     <select
                       className="select-custom"
                       value={oaStatus}
                       onChange={(e) => setOaStatus(e.target.value)}
                     >
-                      <option value="all">🌐 Todos los Estados</option>
-                      <option value="diamond">💎 Solo Diamante (Sin APC)</option>
-                      <option value="gold">🥇 Solo Gold (Con APC)</option>
-                      <option value="green">🌿 Solo Green (Repositorios)</option>
-                      <option value="bronze">🥉 Solo Bronze</option>
-                      <option value="hybrid">🔀 Solo Hybrid</option>
-                      <option value="closed">🔒 Solo Closed</option>
+                      <option value="all">{t('builder.oa_options.all')}</option>
+                      <option value="diamond">{t('builder.oa_options.diamond')}</option>
+                      <option value="gold">{t('builder.oa_options.gold')}</option>
+                      <option value="green">{t('builder.oa_options.green')}</option>
+                      <option value="bronze">{t('builder.oa_options.bronze')}</option>
+                      <option value="hybrid">{t('builder.oa_options.hybrid')}</option>
+                      <option value="closed">{t('builder.oa_options.closed')}</option>
                     </select>
                   </div>
 
@@ -1749,18 +1828,18 @@ export default function App() {
                     ) : (
                       <span style={{ fontWeight: '900', fontSize: '13px', marginRight: '6px' }}>iD</span>
                     )}
-                    {user ? 'Buscar en OpenAlex' : 'Conectar ORCID para Buscar'}
+                    {user ? t('builder.search_openalex_btn') : t('builder.connect_orcid_to_search')}
                   </button>
                 </>
               )}
 
               {searchMode === 'ids' && (
                 <div className="filter-group">
-                  <label className="filter-label">Lista de DOIs o IDs OpenAlex</label>
+                  <label className="filter-label">{t('builder.ids_sidebar_label')}</label>
                   <textarea
                     className="input-text"
                     style={{ minHeight: '180px', fontFamily: 'var(--font-mono)', fontSize: '0.8rem', cursor: user ? 'text' : 'not-allowed' }}
-                    placeholder={user ? "Pega aquí DOIs o IDs separados por comas o saltos de línea:&#10;10.1016/j.jclinepi.2020.08.012&#10;W3023041060&#10;W4288109921" : "🔒 Inicia sesión con ORCID para consultar identificadores..."}
+                    placeholder={user ? t('builder.ids_sidebar_placeholder') : t('builder.ids_sidebar_locked')}
                     value={idsText}
                     disabled={!user}
                     onClick={() => {
@@ -1781,17 +1860,17 @@ export default function App() {
                     }}
                     onClick={handlePreviewIds}
                     disabled={previewLoading || !idsText.trim()}
-                    title={!idsText.trim() ? "Pega al menos un DOI o ID para consultar" : "Consultar identificadores en OpenAlex"}
+                    title={!idsText.trim() ? t('builder.ids_sidebar_btn_tooltip_empty') : t('builder.ids_sidebar_btn_tooltip_ready')}
                   >
                     {previewLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={14} />}
-                    Consultar IDs
+                    {t('builder.ids_sidebar_btn')}
                   </button>
                 </div>
               )}
 
               {searchMode === 'upload' && (
                 <div className="filter-group">
-                  <label className="filter-label">Subir Archivo de Corpus</label>
+                  <label className="filter-label">{t('builder.upload_sidebar_label')}</label>
                   <div
                     style={{
                       border: '2px dashed var(--border-subtle)',
@@ -1811,9 +1890,9 @@ export default function App() {
                     }}
                   >
                     <UploadCloud size={32} color="var(--accent-primary)" style={{ margin: '0 auto 8px' }} />
-                    <p style={{ fontSize: '0.85rem', fontWeight: 600 }}>Selecciona un archivo</p>
+                    <p style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t('builder.upload_sidebar_select')}</p>
                     <p style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '4px' }}>
-                      JSON, JSONL, CSV o Parquet
+                      {t('builder.upload_sidebar_formats')}
                     </p>
                     <input
                       id="file-upload-input"
@@ -1827,12 +1906,12 @@ export default function App() {
                   {isUploading && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: 'var(--accent-primary)' }}>
                       <Loader2 size={14} className="animate-spin" />
-                      Procesando archivo...
+                      {t('builder.upload_sidebar_processing')}
                     </div>
                   )}
                   {uploadResult && (
                     <div style={{ padding: '8px 12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '6px', fontSize: '0.8rem', color: '#34d399' }}>
-                      ✓ {uploadResult.filename} ({uploadResult.total_works} artículos)
+                      {t('builder.upload_sidebar_success', { filename: uploadResult.filename, count: uploadResult.total_works })}
                     </div>
                   )}
                 </div>
@@ -1845,7 +1924,7 @@ export default function App() {
                 <div className="glass-panel" style={{
                   padding: '32px 28px',
                   textAlign: 'center',
-                  background: 'linear-gradient(135deg, rgba(166, 206, 57, 0.1) 0%, rgba(14, 21, 38, 0.95) 100%)',
+                  background: 'linear-gradient(135deg, rgba(166, 206, 57, 0.12) 0%, var(--bg-card) 100%)',
                   border: '1.5px solid rgba(166, 206, 57, 0.35)',
                   borderRadius: '16px',
                   marginBottom: '20px'
@@ -1867,11 +1946,11 @@ export default function App() {
                   }}>
                     iD
                   </div>
-                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
-                    Controles Bloqueados — Autenticación Requerida
+                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '8px' }}>
+                    {t('builder.auth_banner_title')}
                   </h3>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', maxWidth: '560px', margin: '0 auto 20px', lineHeight: 1.5 }}>
-                    Para interactuar con los filtros de países, revistas, instituciones o tópicos, conformar corpus analíticos y descargar la batería de 48 libros cienciométricos, debes iniciar sesión con una cuenta autorizada de ORCID.
+                    {t('builder.auth_banner_desc')}
                   </p>
                   <button
                     className="btn btn-primary"
@@ -1890,7 +1969,7 @@ export default function App() {
                     }}
                   >
                     <span style={{ fontWeight: '900', fontSize: '15px' }}>iD</span>
-                    Conectar Identificador ORCID
+                    {t('builder.auth_banner_btn')}
                   </button>
                 </div>
               )}
@@ -1914,7 +1993,7 @@ export default function App() {
                           userSelect: 'none',
                           transition: 'all 0.2s ease'
                         }}
-                        title={!scopusAvailable ? 'Se requiere configurar SCOPUS_API_KEY en .env para activar el motor Scopus' : 'Conmutar entre búsqueda local en OpenAlex o búsqueda en Scopus API'}
+                        title={!scopusAvailable ? t('builder.scopus_tooltip_unavailable') : t('builder.scopus_tooltip_available')}
                       >
                         <input
                           type="checkbox"
@@ -1931,10 +2010,10 @@ export default function App() {
                           style={{ cursor: scopusAvailable ? 'pointer' : 'not-allowed', accentColor: '#3b82f6' }}
                         />
                         <span style={{ fontSize: '0.82rem', fontWeight: 800, color: isScopusMode ? '#93c5fd' : 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span>🔬 Buscar en Scopus API (Elsevier)</span>
+                          <span>{t('builder.scopus_search_checkbox')}</span>
                           {!scopusAvailable && (
                             <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', fontWeight: 600 }}>
-                              Sin API Key en .env
+                              {t('builder.scopus_no_api_key')}
                             </span>
                           )}
                         </span>
@@ -1942,7 +2021,7 @@ export default function App() {
 
                       {isScopusMode && (
                         <span style={{ fontSize: '0.75rem', color: '#60a5fa', background: 'rgba(59, 130, 246, 0.1)', padding: '4px 10px', borderRadius: '8px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
-                          ⚡ Búsqueda Remota en Scopus + Cruce Local OpenAlex
+                          {t('builder.scopus_badge_remote')}
                         </span>
                       )}
                     </div>
@@ -1970,7 +2049,7 @@ export default function App() {
                             type="text"
                             className="search-input"
                             style={{ paddingRight: '120px', cursor: user ? 'text' : 'pointer' }}
-                            placeholder={user ? "Buscar por título, palabras clave, conceptos o tema..." : "🔒 Inicia sesión con ORCID para buscar en OpenAlex..."}
+                            placeholder={user ? t('builder.main_search_placeholder') : t('builder.main_search_locked')}
                             value={query}
                             disabled={!user}
                             onClick={() => {
@@ -2005,10 +2084,10 @@ export default function App() {
                             }}
                             onClick={handleSearch}
                             disabled={previewLoading || !hasAnyFilter}
-                            title={!hasAnyFilter ? "Ingresa una palabra clave, selecciona una entidad o aplica un filtro para buscar" : "Consultar y dimensionar corpus"}
+                            title={!hasAnyFilter ? t('builder.main_search_tooltip_inactive') : t('builder.main_search_tooltip_active')}
                           >
                             {previewLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-                            Buscar
+                            {t('builder.main_search_btn')}
                           </button>
                         </div>
                       </div>
@@ -2017,58 +2096,58 @@ export default function App() {
                     {/* Active Chips Bar */}
                   {(selectedTopics.length > 0 || selectedSources.length > 0 || selectedInstitutions.length > 0 || selectedAuthors.length > 0 || selectedCountries.length > 0 || selectedTypes.length > 0 || oaStatus !== 'all') && (
                     <div className="chips-container">
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', alignSelf: 'center' }}>Filtros activos:</span>
-                      {selectedTopics.map(t => (
-                        <div key={t.id} className="chip">
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', alignSelf: 'center' }}>{t('builder.active_chips_title')}</span>
+                      {selectedTopics.map(t_topic => (
+                        <div key={t_topic.id} className="chip">
                           <Compass size={13} color="var(--accent-primary)" />
-                          <span>Tópico: <strong>{t.name}</strong></span>
-                          <button className="chip-remove" onClick={() => setSelectedTopics(prev => prev.filter(x => x.id !== t.id))}><X size={12} /></button>
+                          <span>{t('builder.chip_topic')} <strong>{t_topic.name}</strong></span>
+                          <button className="chip-remove" onClick={() => setSelectedTopics(prev => prev.filter(x => x.id !== t_topic.id))}><X size={12} /></button>
                         </div>
                       ))}
                       {selectedSources.map(s => (
                         <div key={s.id} className="chip">
                           <BookOpen size={13} color="#fbbf24" />
-                          <span>Revista: <strong>{s.name}</strong></span>
+                          <span>{t('builder.chip_source')} <strong>{s.name}</strong></span>
                           <button className="chip-remove" onClick={() => setSelectedSources(prev => prev.filter(x => x.id !== s.id))}><X size={12} /></button>
                         </div>
                       ))}
                       {selectedInstitutions.map(i => (
                         <div key={i.id} className="chip">
                           <Building2 size={13} color="#34d399" />
-                          <span>Institución: <strong>{i.name}</strong></span>
+                          <span>{t('builder.chip_institution')} <strong>{i.name}</strong></span>
                           <button className="chip-remove" onClick={() => setSelectedInstitutions(prev => prev.filter(x => x.id !== i.id))}><X size={12} /></button>
                         </div>
                       ))}
                       {selectedAuthors.map(a => (
                         <div key={a.id} className="chip">
                           <Users size={13} color="#a78bfa" />
-                          <span>Autor: <strong>{a.name}</strong></span>
+                          <span>{t('builder.chip_author')} <strong>{a.name}</strong></span>
                           <button className="chip-remove" onClick={() => setSelectedAuthors(prev => prev.filter(x => x.id !== a.id))}><X size={12} /></button>
                         </div>
                       ))}
                       {selectedCountries.map(c => (
                         <div key={c.code || c.id} className="chip">
                           <Globe2 size={13} color="#38bdf8" />
-                          <span>País: <strong>{c.flag || ''} {c.country_name || c.name}</strong></span>
+                          <span>{t('builder.chip_country')} <strong>{c.flag || ''} {c.country_name || c.name}</strong></span>
                           <button className="chip-remove" onClick={() => setSelectedCountries(prev => prev.filter(x => (x.code || x.id) !== (c.code || c.id)))}><X size={12} /></button>
                         </div>
                       ))}
                       {selectedCountries.length > 1 && (
                         <span style={{ fontSize: '0.7rem', background: 'rgba(56, 189, 248, 0.15)', color: 'var(--accent-primary)', padding: '2px 8px', borderRadius: '4px', fontWeight: 700, alignSelf: 'center' }}>
-                          Lógica: {countryLogic}
+                          {t('builder.chip_logic')} {countryLogic}
                         </span>
                       )}
-                      {selectedTypes.map(t => (
-                        <div key={t.id || t.type_id} className="chip">
+                      {selectedTypes.map(t_item => (
+                        <div key={t_item.id || t_item.type_id} className="chip">
                           <FileText size={13} color="#fb7185" />
-                          <span>Tipo: <strong>{t.flag || '📄'} {t.type_name || t.name}</strong></span>
-                          <button className="chip-remove" onClick={() => setSelectedTypes(prev => prev.filter(x => (x.id || x.type_id) !== (t.id || t.type_id)))}><X size={12} /></button>
+                          <span>{t('builder.chip_type')} <strong>{t_item.flag || '📄'} {t_item.type_name || t_item.name}</strong></span>
+                          <button className="chip-remove" onClick={() => setSelectedTypes(prev => prev.filter(x => (x.id || x.type_id) !== (t_item.id || t_item.type_id)))}><X size={12} /></button>
                         </div>
                       ))}
                       {oaStatus !== 'all' && (
                         <div className="chip">
                           <Unlock size={13} color="#34d399" />
-                          <span>OA: <strong>{oaStatus}</strong></span>
+                          <span>{t('builder.chip_oa')} <strong>{oaStatus}</strong></span>
                           <button className="chip-remove" onClick={() => setOaStatus('all')}><X size={12} /></button>
                         </div>
                       )}
@@ -2089,18 +2168,18 @@ export default function App() {
                       fontSize: '0.75rem',
                       fontWeight: 800
                     }}>
-                      CORPUS CONFORMADO
+                      {t('builder.corpus_assembled_badge')}
                     </span>
-                    <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff' }}>
+                    <span style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)' }}>
                       {previewLoading ? (
                         <Loader2 size={16} className="animate-spin" style={{ display: 'inline' }} />
                       ) : (
                         previewData.total.toLocaleString()
-                      )} artículos identificados
+                      )} {t('builder.articles_identified')}
                     </span>
                   </div>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    Se procesará la totalidad del corpus ({previewData.total.toLocaleString()} artículos) para generar los 48 libros Excel con indicadores analíticos completos.
+                    {t('builder.corpus_processing_notice', { count: previewData.total.toLocaleString() })}
                   </p>
                 </div>
 
@@ -2108,8 +2187,8 @@ export default function App() {
                   <input
                     type="text"
                     className="input-text"
-                    style={{ width: '220px', background: '#0e1526' }}
-                    placeholder="Nombre del Paquete"
+                    style={{ width: '220px', background: 'var(--bg-input)' }}
+                    placeholder={t('builder.package_name_placeholder')}
                     disabled={!user}
                     value={packageName}
                     onChange={(e) => setPackageName(e.target.value)}
@@ -2120,21 +2199,24 @@ export default function App() {
                       padding: '12px 24px',
                       fontSize: '0.95rem',
                       opacity: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 0.5 : 1,
-                      cursor: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 'not-allowed' : 'pointer'
+                      cursor: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
                     }}
                     disabled={previewData.total === 0 || previewLoading || !hasAnyFilter}
-                    title={!hasAnyFilter ? "Define al menos un filtro o palabra clave para calcular métricas" : (previewData.total > 1000000 ? "Corpus superior a 1M: Se solicitará confirmación" : "Calcular batería de 48 tablas de indicadores")}
+                    title={!hasAnyFilter ? "Define al menos un filtro o palabra clave para calcular métricas" : "Configurar ventanas de tiempo y matrices de desempeño"}
                     onClick={() => {
                       if (!user) {
                         setLoginModalReason('job_creation')
                         setLoginModalOpen(true)
                         return
                       }
-                      handleLaunchCalculation()
+                      setActiveTab('metrics')
                     }}
                   >
-                    <Sparkles size={18} />
-                    Calcular Métricas (48 Tablas)
+                    <SlidersHorizontal size={18} />
+                    <span>{t('builder.cta.configure_btn')} →</span>
                   </button>
                 </div>
               </div>
@@ -2148,8 +2230,8 @@ export default function App() {
                       <Database size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>569M+</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Obras Científicas Globales</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_works_count')}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('builder.stats_works_label')}</div>
                     </div>
                   </div>
 
@@ -2158,8 +2240,8 @@ export default function App() {
                       <Users size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>337M+</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Perfiles de Investigadores</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_researchers_count')}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('builder.stats_researchers_label')}</div>
                     </div>
                   </div>
 
@@ -2168,8 +2250,8 @@ export default function App() {
                       <Building2 size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>109K+</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Instituciones & RORs</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_institutions_count')}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('builder.stats_institutions_label')}</div>
                     </div>
                   </div>
 
@@ -2178,8 +2260,8 @@ export default function App() {
                       <Library size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>124K+</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Revistas & Fuentes</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_sources_count')}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('builder.stats_sources_label')}</div>
                     </div>
                   </div>
                 </div>
@@ -2189,9 +2271,9 @@ export default function App() {
                   {previewLoading ? (
                     <div style={{ textAlign: 'center', padding: '40px' }}>
                       <Loader2 size={36} className="animate-spin" style={{ margin: '0 auto 14px', color: 'var(--accent-primary)' }} />
-                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>Consultando OpenAlex ClickHouse...</h4>
+                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-main)' }}>{t('builder.hero_loading_title')}</h4>
                       <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                        Cuantificando registros y aplicando filtros analíticos en el cluster de alta velocidad.
+                        {t('builder.hero_loading_desc')}
                       </p>
                     </div>
                   ) : !hasSearched ? (
@@ -2199,11 +2281,11 @@ export default function App() {
                       <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'rgba(56, 189, 248, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', margin: '0 auto 16px' }}>
                         <Search size={28} />
                       </div>
-                      <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
-                        Dimensionamiento del Corpus en OpenAlex
+                      <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '8px' }}>
+                        {t('builder.hero_empty_title')}
                       </h3>
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '520px', margin: '0 auto 20px', lineHeight: 1.5 }}>
-                        Configura los filtros en la barra lateral o escribe palabras clave en el buscador y presiona <strong>Buscar</strong> para consultar la cantidad exacta de artículos disponibles antes de calcular las 48 tablas.
+                        {t('builder.hero_empty_desc')}
                       </p>
                       <button
                         className="btn btn-primary"
@@ -2215,17 +2297,17 @@ export default function App() {
                         }}
                         onClick={handleSearch}
                         disabled={previewLoading || !hasAnyFilter}
-                        title={!hasAnyFilter ? "Ingresa una palabra clave, selecciona una entidad o aplica un filtro para consultar" : "Consultar y dimensionar corpus"}
+                        title={!hasAnyFilter ? t('builder.hero_empty_btn_tooltip_inactive') : t('builder.hero_empty_btn_tooltip_active')}
                       >
-                        <Search size={16} /> Consultar Corpus
+                        <Search size={16} /> {t('builder.hero_empty_btn')}
                       </button>
                     </div>
                   ) : previewData.total === 0 ? (
                     <div style={{ textAlign: 'center', padding: '40px 20px' }}>
                       <AlertCircle size={36} color="#f59e0b" style={{ margin: '0 auto 12px' }} />
-                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>No se encontraron artículos</h4>
+                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-main)' }}>{t('builder.hero_no_results_title')}</h4>
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px', maxWidth: '460px', margin: '4px auto 0' }}>
-                        No existen registros que coincidan con la combinación de filtros seleccionada. Prueba ampliando el rango de años o flexibilizando las restricciones.
+                        {t('builder.hero_no_results_desc')}
                       </p>
                     </div>
                   ) : (
@@ -2234,11 +2316,11 @@ export default function App() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <CheckCircle2 size={24} color="#10b981" />
                           <div>
-                            <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#fff', margin: 0 }}>
-                              Corpus Localizado con Éxito
+                            <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)', margin: 0 }}>
+                              {t('builder.hero_success_title')}
                             </h4>
                             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                              Resultados verificados sobre la base de datos OpenAlex
+                              {t('builder.hero_success_subtitle')}
                             </span>
                           </div>
                         </div>
@@ -2248,49 +2330,49 @@ export default function App() {
                             {previewData.total.toLocaleString()}
                           </div>
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            Artículos Totales Encontrados
+                            {t('builder.hero_total_found_label')}
                           </div>
                         </div>
                       </div>
 
                       {/* Criteria summary */}
-                      <div style={{ background: '#0e1526', borderRadius: 'var(--radius-md)', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                      <div style={{ background: 'var(--bg-input)', borderRadius: 'var(--radius-md)', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
                         <div>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Rango Temporal</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_time_range_label')}</span>
                           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
-                            {allYears ? 'Todo (1900 — 2026)' : `${startYear} — ${endYear}`}
+                            {allYears ? `1900 — 2026 (${t('common.all')})` : `${startYear} — ${endYear}`}
                           </div>
                         </div>
 
                         <div>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Acceso Abierto</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_open_access_label')}</span>
                           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
-                            {oaStatus === 'all' ? 'Todos los estados' : oaStatus.toUpperCase()}
+                            {oaStatus === 'all' ? t('builder.hero_all_states') : oaStatus.toUpperCase()}
                           </div>
                         </div>
 
                         <div>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Países de Afiliación</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_countries_label')}</span>
                           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
                             {selectedCountries.length === 0
-                              ? 'Global (Sin filtro)'
+                              ? t('builder.hero_global_no_filter')
                               : `${selectedCountries.map(c => `${c.flag || ''} ${c.code || c.name}`).join(', ')} (${countryLogic})`}
                           </div>
                         </div>
 
                         <div>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Tipo de Documento</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_doc_type_label')}</span>
                           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
                             {selectedTypes.length === 0
-                              ? 'Todos los tipos'
+                              ? t('builder.hero_all_types')
                               : selectedTypes.map(t => `${t.flag || ''} ${t.type_name || t.name}`).join(', ')}
                           </div>
                         </div>
 
                         <div>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Alcance del Cálculo</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_scope_label')}</span>
                           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#34d399', marginTop: '2px' }}>
-                            100% Corpus Completo ({previewData.total.toLocaleString()} arts)
+                            {t('builder.hero_full_corpus_scope', { count: previewData.total.toLocaleString() })}
                           </div>
                         </div>
                       </div>
@@ -2322,10 +2404,10 @@ export default function App() {
                           </div>
                           <div style={{ flex: 1 }}>
                             <h4 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#fbbf24', margin: '0 0 2px' }}>
-                              ⚠️ Aviso de Volumen Masivo ({previewData.total.toLocaleString()} Obras)
+                              {t('builder.hero_massive_warning_title', { count: previewData.total.toLocaleString() })}
                             </h4>
                             <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', margin: 0, lineHeight: 1.45 }}>
-                              Este corpus supera <strong>1 millón de artículos</strong>. Calcular los 15 agregadores y 48 libros Excel demandará un tiempo de cómputo y memoria considerables en el cluster. Se solicitará confirmación al iniciar el cálculo. Te sugerimos acotar por años o disciplinas si deseas un subconjunto específico.
+                              {t('builder.hero_massive_warning_desc')}
                             </p>
                           </div>
                         </div>
@@ -2344,11 +2426,15 @@ export default function App() {
                           <FileText size={20} />
                         </div>
                         <div>
-                          <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#fff', margin: 0 }}>
-                            Vista Previa de Artículos del Corpus
+                          <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)', margin: 0 }}>
+                            {t('builder.preview_table_title')}
                           </h4>
                           <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-                            Mostrando {((currentPage - 1) * pageSize) + 1} a {Math.min(currentPage * pageSize, previewData.total)} de {previewData.total.toLocaleString()} obras encontradas
+                            {t('builder.preview_table_showing', {
+                              start: ((currentPage - 1) * pageSize) + 1,
+                              end: Math.min(currentPage * pageSize, previewData.total),
+                              total: previewData.total.toLocaleString()
+                            })}
                           </span>
                         </div>
                       </div>
@@ -2414,7 +2500,7 @@ export default function App() {
                     {/* Table of Works */}
                     <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid var(--border-subtle)', background: 'rgba(0, 0, 0, 0.2)' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
-                        <thead style={{ background: '#0e1526', borderBottom: '1px solid var(--border-subtle)' }}>
+                        <thead style={{ background: 'var(--bg-input)', borderBottom: '1px solid var(--border-subtle)' }}>
                           <tr>
                             <th style={{ padding: '12px 14px', color: 'var(--text-main)', fontWeight: 700, minWidth: '280px' }}>
                               Artículo / Obra Científica
@@ -2582,7 +2668,7 @@ export default function App() {
                     {previewData.total_pages > 1 && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', fontSize: '0.8rem', color: 'var(--text-dim)', flexWrap: 'wrap', gap: '8px' }}>
                         <span>
-                          Página <strong>{currentPage}</strong> de <strong>{previewData.total_pages}</strong> ({previewData.total.toLocaleString()} obras)
+                          {t('modals.citing.pagination_page', { page: currentPage, totalPages: previewData.total_pages, count: previewData.total.toLocaleString() })}
                         </span>
                         <div style={{ display: 'flex', gap: '6px' }}>
                           <button
@@ -2593,11 +2679,11 @@ export default function App() {
                               borderRadius: '6px',
                               background: 'rgba(255, 255, 255, 0.05)',
                               border: '1px solid var(--border-color)',
-                              color: currentPage <= 1 ? 'var(--text-muted)' : '#fff',
+                              color: currentPage <= 1 ? 'var(--text-muted)' : 'var(--text-main)',
                               cursor: currentPage <= 1 ? 'not-allowed' : 'pointer'
                             }}
                           >
-                            Anterior
+                            {t('modals.citing.btn_prev')}
                           </button>
                           <button
                             disabled={previewLoading || currentPage >= previewData.total_pages}
@@ -2607,11 +2693,11 @@ export default function App() {
                               borderRadius: '6px',
                               background: 'rgba(255, 255, 255, 0.05)',
                               border: '1px solid var(--border-color)',
-                              color: currentPage >= previewData.total_pages ? 'var(--text-muted)' : '#fff',
+                              color: currentPage >= previewData.total_pages ? 'var(--text-muted)' : 'var(--text-main)',
                               cursor: currentPage >= previewData.total_pages ? 'not-allowed' : 'pointer'
                             }}
                           >
-                            Siguiente
+                            {t('modals.citing.btn_next')}
                           </button>
                         </div>
                       </div>
@@ -2627,34 +2713,30 @@ export default function App() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
               <div>
                 <h2 style={{ fontSize: '1.4rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {user && user.is_admin ? (
+                    <ShieldCheck size={24} color="#38bdf8" />
+                  ) : (
+                    <FolderArchive size={24} color="var(--accent-primary)" />
+                  )}
                   {user ? (
                     user.is_admin ? (
-                      <>
-                        <ShieldCheck size={24} color="#38bdf8" />
-                        Centro Global de Paquetes (.ZIP) — Admin
-                      </>
+                      t('downloads.header_admin_title')
                     ) : (
-                      <>
-                        <FolderArchive size={24} color="var(--accent-primary)" />
-                        Tus Paquetes Generados ({user.name})
-                      </>
+                      t('downloads.header_user_title', { name: user.name })
                     )
                   ) : (
-                    <>
-                      <FolderArchive size={24} color="var(--accent-primary)" />
-                      Centro de Paquetes Generados (.ZIP)
-                    </>
+                    t('downloads.header_guest_title')
                   )}
                 </h2>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)' }}>
                   {user ? (
                     user.is_admin ? (
-                      `Visualizando todos los paquetes disponibles en el sistema (${packages.length} paquetes).`
+                      t('downloads.header_admin_desc', { count: packages.length })
                     ) : (
-                      `Descarga y gestión de tus 48 libros Excel, JSON OpenAlex y Parquets asociados a tu ORCID (${user.orcid}).`
+                      t('downloads.header_user_desc', { orcid: user.orcid })
                     )
                   ) : (
-                    'Conéctate con ORCID para asociar, almacenar y visualizar tus paquetes cienciométricos personales.'
+                    t('downloads.header_guest_desc')
                   )}
                 </p>
               </div>
@@ -2670,12 +2752,12 @@ export default function App() {
                     style={{ backgroundColor: '#a6ce39', color: '#111827' }}
                   >
                     <span style={{ fontWeight: '900' }}>iD</span>
-                    Conectar ORCID
+                    {t('auth.connect_orcid')}
                   </button>
                 )}
                 <button className="btn btn-secondary" onClick={() => fetchPackages()}>
                   <RefreshCw size={16} />
-                  Actualizar Lista
+                  {t('downloads.refresh_list')}
                 </button>
               </div>
             </div>
@@ -2694,8 +2776,8 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <KeyRound size={24} color="#38bdf8" />
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#fff' }}>Centro de Descargas Personalizado</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Para mantener tus paquetes organizados y privados, inicia sesión con tu identificador académico de ORCID.</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)' }}>{t('downloads.custom_center_title')}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>{t('downloads.custom_center_desc')}</div>
                   </div>
                 </div>
                 <button
@@ -2706,7 +2788,7 @@ export default function App() {
                   }}
                   style={{ backgroundColor: '#a6ce39', color: '#111827', whiteSpace: 'nowrap' }}
                 >
-                  Identificarse
+                  {t('downloads.identify_btn')}
                 </button>
               </div>
             )}
@@ -2717,7 +2799,7 @@ export default function App() {
                 return (
                   <div style={{ textAlign: 'center', padding: '60px' }}>
                     <Loader2 size={36} className="animate-spin" style={{ margin: '0 auto 16px', color: 'var(--accent-primary)' }} />
-                    <p style={{ color: 'var(--text-muted)' }}>Explorando paquetes en disco...</p>
+                    <p style={{ color: 'var(--text-muted)' }}>{t('downloads.loading_packages')}</p>
                   </div>
                 )
               }
@@ -2725,21 +2807,19 @@ export default function App() {
                 return (
                   <div className="glass-panel" style={{ padding: '60px', textAlign: 'center' }}>
                     <FolderArchive size={48} color="var(--text-dim)" style={{ margin: '0 auto 16px' }} />
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-                      {user ? 'Aún no has generado paquetes .ZIP de descarga' : 'Aún no hay paquetes .ZIP listos'}
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                      {user ? t('downloads.empty_title_user') : t('downloads.empty_title_guest')}
                     </h3>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '6px', maxWidth: '480px', margin: '6px auto 16px' }}>
-                      {user
-                        ? 'Explora las tablas de tu corpus en la pestaña "Vista de Tablas" y presiona el botón "📦 Generar Paquete .ZIP" cuando estés seguro de los resultados para crear el archivo comprimido.'
-                        : 'Inicia sesión con tu ORCID, conforma un corpus y genera tu paquete .ZIP una vez que hayas revisado las tablas.'}
+                      {user ? t('downloads.empty_desc_user') : t('downloads.empty_desc_guest')}
                     </p>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
                       <button className="btn btn-secondary" onClick={() => setActiveTab('tables')}>
                         <FileSpreadsheet size={16} />
-                        Ir a Vista de Tablas
+                        {t('downloads.go_to_tables')}
                       </button>
                       <button className="btn btn-primary" onClick={() => setActiveTab('builder')}>
-                        Ir al Conformador de Corpus
+                        {t('downloads.go_to_builder')}
                       </button>
                     </div>
                   </div>
@@ -2753,48 +2833,48 @@ export default function App() {
                         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <FolderArchive size={22} color="var(--accent-primary)" />
-                            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff', wordBreak: 'break-all' }}>
+                            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-main)', wordBreak: 'break-all' }}>
                               {pkg.package_name}
                             </h3>
                           </div>
-                          <span className="badge badge-green">Listo .ZIP</span>
+                          <span className="badge badge-green">{t('downloads.ready_badge')}</span>
                         </div>
 
                       <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
                         {pkg.owner_name || pkg.owner_orcid ? (
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.03)', padding: '3px 6px', borderRadius: '4px' }}>
-                            <span>Investigador:</span>
+                            <span>{t('downloads.researcher')}</span>
                             <strong style={{ color: pkg.is_owner ? '#a6ce39' : '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <User size={12} />
-                              {pkg.owner_name || pkg.owner_orcid} {pkg.is_owner ? '(Tú)' : ''}
+                              {pkg.owner_name || pkg.owner_orcid} {pkg.is_owner ? t('downloads.you') : ''}
                             </strong>
                           </div>
                         ) : null}
 
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Documentos Usados:</span>
+                          <span>{t('downloads.used_documents')}</span>
                           <strong style={{ color: '#38bdf8', fontFamily: 'var(--font-mono)' }}>
-                            {pkg.total_works ? `${pkg.total_works.toLocaleString()} arts` : 'Completo'}
+                            {pkg.total_works ? `${pkg.total_works.toLocaleString()} arts` : t('downloads.full')}
                           </strong>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Archivos Excel:</span>
-                          <strong style={{ color: 'var(--text-muted)' }}>48 libros (.xlsx)</strong>
+                          <span>{t('downloads.excel_files')}</span>
+                          <strong style={{ color: 'var(--text-muted)' }}>{t('downloads.excel_books_count')}</strong>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Corpus JSON OpenAlex:</span>
+                          <span>{t('downloads.corpus_json')}</span>
                           <strong style={{ color: pkg.has_json ? '#34d399' : 'var(--text-dim)' }}>
-                            {pkg.has_json ? 'Incluido' : 'No'}
+                            {pkg.has_json ? t('modals.package_details.included') : t('modals.package_details.not_included')}
                           </strong>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Tamaño del Paquete:</span>
+                          <span>{t('downloads.package_size')}</span>
                           <strong style={{ color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)' }}>
                             {pkg.zip_size_mb} MB
                           </strong>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Fecha de Generación:</span>
+                          <span>{t('downloads.generation_date')}</span>
                           <span style={{ color: 'var(--text-dim)' }}>
                             {new Date(pkg.created_at).toLocaleString()}
                           </span>
@@ -2810,11 +2890,11 @@ export default function App() {
                         download
                       >
                         <Download size={16} />
-                        Descargar .ZIP
+                        {t('downloads.download_zip')}
                       </a>
                       <button
                         className="btn btn-secondary"
-                        title="Explorar Tablas en Panel Interactivo"
+                        title={t('downloads.explore_tables_tooltip')}
                         style={{ color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.35)', background: 'rgba(56, 189, 248, 0.08)' }}
                         onClick={() => {
                           setSelectedPackageForTablePreview(pkg.package_name)
@@ -2822,18 +2902,18 @@ export default function App() {
                         }}
                       >
                         <FileSpreadsheet size={16} />
-                        <span>Explorar Tablas</span>
+                        <span>{t('downloads.explore_tables')}</span>
                       </button>
                       <button
                         className="btn btn-secondary"
-                        title="Ver Ficha Técnica"
+                        title={t('downloads.view_details_tooltip')}
                         onClick={() => setSelectedPackageDetails(pkg)}
                       >
                         <ExternalLink size={16} />
                       </button>
                       <button
                         className="btn btn-secondary"
-                        title="Eliminar Paquete de Disco"
+                        title={t('downloads.delete_tooltip')}
                         style={{ color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.35)', background: 'rgba(239, 68, 68, 0.08)' }}
                         onClick={() => handleDeletePackage(pkg.package_name)}
                       >
@@ -2865,22 +2945,22 @@ export default function App() {
                 {modalEntity === 'work_type' && <FileText size={22} color="#fb7185" />}
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
                   {modalEntity === 'domain'
-                    ? 'Seleccionar Dominio Científico'
+                    ? t('builder.entity_modal.title_domain')
                     : modalEntity === 'field'
-                    ? 'Buscar Campo Científico'
+                    ? t('builder.entity_modal.title_field')
                     : modalEntity === 'subfield'
-                    ? 'Buscar Subcampo Especializado'
+                    ? t('builder.entity_modal.title_subfield')
                     : modalEntity === 'topic'
-                    ? 'Buscar Tópico'
+                    ? t('builder.entity_modal.title_topic')
                     : modalEntity === 'source'
-                    ? 'Buscar Revista / Fuente'
+                    ? t('builder.entity_modal.title_source')
                     : modalEntity === 'institution'
-                    ? 'Buscar Institución'
+                    ? t('builder.entity_modal.title_institution')
                     : modalEntity === 'author'
-                    ? 'Buscar Investigador'
+                    ? t('builder.entity_modal.title_author')
                     : modalEntity === 'country'
-                    ? 'Seleccionar País (Catálogo Oficial)'
-                    : 'Seleccionar Tipo de Documento (OpenAlex)'}
+                    ? t('builder.entity_modal.title_country')
+                    : t('builder.entity_modal.title_work_type')}
                 </h3>
               </div>
               <button
@@ -2899,10 +2979,10 @@ export default function App() {
                 className="search-input"
                 placeholder={
                   modalEntity === 'country'
-                    ? 'Escribe el nombre del país (ej. México, España) o código ISO (MX, US)...'
+                    ? t('builder.entity_modal.placeholder_country')
                     : modalEntity === 'work_type'
-                    ? 'Escribe tipo de documento (ej. Artículo, Libro, Preprint, Tesis, Dataset)...'
-                    : `Escribe el nombre del ${modalEntity}...`
+                    ? t('builder.entity_modal.placeholder_work_type')
+                    : t('builder.entity_modal.placeholder_default')
                 }
                 value={entitySearchQuery}
                 onChange={(e) => setEntitySearchQuery(e.target.value)}
@@ -2913,11 +2993,11 @@ export default function App() {
               {isSearchingEntity ? (
                 <div style={{ textAlign: 'center', padding: '30px' }}>
                   <Loader2 size={24} className="animate-spin" style={{ margin: '0 auto 8px', color: 'var(--accent-primary)' }} />
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Buscando en catálogo...</p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t('builder.entity_modal.searching')}</p>
                 </div>
               ) : entityResults.length === 0 ? (
                 <p style={{ textAlign: 'center', padding: '30px', color: 'var(--text-dim)', fontSize: '0.85rem' }}>
-                  {entitySearchQuery ? 'No se encontraron resultados.' : 'Escribe para buscar coincidencias.'}
+                  {entitySearchQuery ? t('builder.entity_modal.no_results') : t('builder.entity_modal.type_to_search')}
                 </p>
               ) : (
                 entityResults.map((item) => (
@@ -2926,7 +3006,7 @@ export default function App() {
                     onClick={() => handleSelectEntity(item)}
                     style={{
                       padding: '10px 14px',
-                      background: '#0e1526',
+                      background: 'var(--bg-input)',
                       borderRadius: '8px',
                       border: '1px solid var(--border-subtle)',
                       cursor: 'pointer',
@@ -2939,15 +3019,15 @@ export default function App() {
                     onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border-subtle)'}
                   >
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>{item.name}</div>
+                      <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-main)' }}>{item.name}</div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
                         {item.type === 'countries'
-                          ? `Código ISO: ${item.code || item.id}`
+                          ? `${t('builder.entity_modal.iso_code')} ${item.code || item.id}`
                           : `ID: ${item.id} ${item.extra?.field ? `• ${item.extra.field}` : ''} ${item.extra?.country_code ? `• ${item.extra.country_code}` : ''}`}
                       </div>
                     </div>
                     <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                      {item.works_count ? `${item.works_count.toLocaleString()} arts` : ''}
+                      {item.works_count ? t('builder.entity_modal.arts_count', { count: item.works_count.toLocaleString() }) : ''}
                     </span>
                   </div>
                 ))
@@ -2988,15 +3068,15 @@ export default function App() {
                 )}
               </div>
 
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)' }}>
                 {activeJob.status === 'completed'
-                  ? '¡Cálculo de Indicadores Completado!'
+                  ? t('jobs.completed_title')
                   : activeJob.status === 'failed'
-                  ? 'Error en el Procesamiento'
-                  : 'Calculando Indicadores Cienciométricos'}
+                  ? t('jobs.failed_title')
+                  : t('jobs.running_title')}
               </h2>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Paquete: <strong>{activeJob.package_name}</strong>
+                {t('jobs.package_label')} <strong>{activeJob.package_name}</strong>
               </p>
             </div>
 
@@ -3015,7 +3095,7 @@ export default function App() {
 
             {/* 16 Dimensions Checklist Summary */}
             <div style={{
-              background: '#0e1526',
+              background: 'var(--bg-input)',
               borderRadius: '8px',
               padding: '12px 16px',
               border: '1px solid var(--border-subtle)',
@@ -3025,16 +3105,16 @@ export default function App() {
               gap: '6px'
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-dim)' }}>
-                <span>Dimensiones Analíticas:</span>
-                <span>16 Entidades (Locations, Orgs, Authors, Sources, Taxonomy, APC...)</span>
+                <span>{t('jobs.dimensions_label')}</span>
+                <span>{t('jobs.dimensions_desc')}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-dim)' }}>
-                <span>Libros Excel Estilizados:</span>
-                <span>48 Reportes (Histórico, 2021-2025, Anual Trend)</span>
+                <span>{t('jobs.excel_label')}</span>
+                <span>{t('jobs.excel_desc')}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-dim)' }}>
-                <span>Dataset Completo:</span>
-                <span>JSON Estructurado OpenAlex</span>
+                <span>{t('jobs.dataset_label')}</span>
+                <span>{t('jobs.dataset_desc')}</span>
               </div>
             </div>
 
@@ -3060,7 +3140,7 @@ export default function App() {
                   }}
                 >
                   <FileSpreadsheet size={18} />
-                  <span>Explorar y Revisar Tablas (16 Entidades)</span>
+                  <span>{t('jobs.explore_btn')}</span>
                 </button>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
@@ -3073,7 +3153,7 @@ export default function App() {
                     }}
                   >
                     <SlidersHorizontal size={15} />
-                    <span>Refinar en Conformador</span>
+                    <span>{t('jobs.refine_btn')}</span>
                   </button>
 
                   <button
@@ -3085,13 +3165,13 @@ export default function App() {
                     }}
                   >
                     <FolderArchive size={15} />
-                    <span>Ir a Centro de Descargas</span>
+                    <span>{t('jobs.downloads_btn')}</span>
                   </button>
                 </div>
               </div>
             ) : activeJob.status === 'failed' ? (
               <button className="btn btn-secondary" onClick={() => setJobModalOpen(false)}>
-                Cerrar
+                {t('common.close')}
               </button>
             ) : (
               <button
@@ -3099,7 +3179,7 @@ export default function App() {
                 style={{ fontSize: '0.8rem' }}
                 onClick={() => setJobModalOpen(false)}
               >
-                Minimizar (Continuará en segundo plano)
+                {t('jobs.minimize_btn')}
               </button>
             )}
           </div>
@@ -3125,8 +3205,8 @@ export default function App() {
               <AlertTriangle size={32} />
             </div>
 
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
-              Confirmación de Corpus Masivo
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '8px' }}>
+              {t('modals.massive_corpus.title')}
             </h3>
 
             <div style={{
@@ -3136,13 +3216,11 @@ export default function App() {
               fontFamily: 'var(--font-mono)',
               marginBottom: '12px'
             }}>
-              {previewData.total.toLocaleString()} Artículos Identificados
+              {previewData.total.toLocaleString()} {t('modals.massive_corpus.identified')}
             </div>
 
-            <p style={{ fontSize: '0.86rem', color: 'var(--text-muted)', lineHeight: '1.55', marginBottom: '22px' }}>
-              Estás a punto de solicitar el cálculo exhaustivo de <strong>16 entidades, 48 libros Excel y Parquets analíticos</strong> sobre un corpus superior a <strong>1 millón de obras</strong>.
-              <br /><br />
-              Este proceso consumirá recursos intensivos de cómputo y memoria en el cluster. ¿Deseas continuar o prefieres refinar los filtros por año, país o disciplina?
+            <p style={{ fontSize: '0.86rem', color: 'var(--text-muted)', lineHeight: '1.55', marginBottom: '22px', whiteSpace: 'pre-line' }}>
+              {t('modals.massive_corpus.desc')}
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -3167,7 +3245,7 @@ export default function App() {
                 }}
               >
                 <Sparkles size={18} />
-                <span>Sí, Procesar Corpus Masivo</span>
+                <span>{t('modals.massive_corpus.proceed')}</span>
               </button>
 
               <button
@@ -3176,7 +3254,7 @@ export default function App() {
                 onClick={() => setMassiveCorpusModalOpen(false)}
               >
                 <SlidersHorizontal size={14} />
-                <span>Refinar Filtros en Conformador</span>
+                <span>{t('modals.massive_corpus.refine')}</span>
               </button>
             </div>
           </div>
@@ -3202,12 +3280,12 @@ export default function App() {
               <Sparkles size={28} />
             </div>
 
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
-              El Corpus No Ha Cambiado
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '8px' }}>
+              {t('modals.duplicate.title')}
             </h3>
 
             <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '22px' }}>
-              Los filtros, temporalidad y parámetros son idénticos a los del paquete recién procesado: <strong>{duplicatePackageName}</strong>. No es necesario volver a calcular para ver los resultados.
+              {t('modals.duplicate.desc', { package: duplicatePackageName })}
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -3230,7 +3308,7 @@ export default function App() {
                 }}
               >
                 <FileSpreadsheet size={18} />
-                <span>Explorar Tablas Calculadas</span>
+                <span>{t('modals.duplicate.explore')}</span>
               </button>
 
               <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
@@ -3240,7 +3318,7 @@ export default function App() {
                   onClick={() => handleLaunchCalculation(true)}
                 >
                   <RefreshCw size={14} />
-                  <span>Forzar Recálculo</span>
+                  <span>{t('modals.duplicate.recalc')}</span>
                 </button>
 
                 <button
@@ -3248,7 +3326,7 @@ export default function App() {
                   style={{ flex: 1, padding: '10px 14px', fontSize: '0.85rem' }}
                   onClick={() => setDuplicateModalOpen(false)}
                 >
-                  Cancelar
+                  {t('modals.duplicate.cancel')}
                 </button>
               </div>
             </div>
@@ -3266,8 +3344,8 @@ export default function App() {
                   <FolderArchive size={22} />
                 </div>
                 <div>
-                  <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#fff', margin: 0 }}>
-                    Ficha Técnica del Paquete
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
+                    {t('modals.package_details.title')}
                   </h3>
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
                     {selectedPackageDetails.package_name}
@@ -3284,15 +3362,15 @@ export default function App() {
 
             {/* Quick Metrics Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginTop: '16px' }}>
-              <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Documentos Usados</span>
+              <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>{t('modals.package_details.docs_used')}</span>
                 <strong style={{ fontSize: '1.1rem', color: '#38bdf8', fontFamily: 'var(--font-mono)' }}>
-                  {selectedPackageDetails.total_works ? `${selectedPackageDetails.total_works.toLocaleString()}` : 'Completo'}
+                  {selectedPackageDetails.total_works ? `${selectedPackageDetails.total_works.toLocaleString()}` : t('downloads.full')}
                 </strong>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>artículos procesados</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>{t('modals.package_details.arts_processed')}</span>
               </div>
 
-              <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Libros Excel</span>
                 <strong style={{ fontSize: '1.1rem', color: '#34d399', fontFamily: 'var(--font-mono)' }}>
                   45 Libros
@@ -3300,7 +3378,7 @@ export default function App() {
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>15 ent. × 3 periodos</span>
               </div>
 
-              <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Tamaño Paquete</span>
                 <strong style={{ fontSize: '1.1rem', color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)' }}>
                   {selectedPackageDetails.zip_size_mb} MB
@@ -3308,7 +3386,7 @@ export default function App() {
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>archivo comprimido</span>
               </div>
 
-              <div style={{ background: '#0e1526', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Corpus JSON</span>
                 <strong style={{ fontSize: '1.1rem', color: selectedPackageDetails.has_json ? '#10b981' : 'var(--text-dim)' }}>
                   {selectedPackageDetails.has_json ? 'Incluido' : 'No'}
@@ -3318,24 +3396,24 @@ export default function App() {
             </div>
 
             {/* Search Strategy & Filters Card */}
-            <div style={{ background: '#0e1526', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginTop: '16px' }}>
+            <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginTop: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                 <SlidersHorizontal size={16} color="var(--accent-primary)" />
-                <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#fff', margin: 0 }}>
-                  Estrategia de Búsqueda y Filtros Utilizados
+                <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-main)', margin: 0 }}>
+                  {t('modals.package_details.strategy_title')}
                 </h4>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.8rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
-                  <span style={{ color: 'var(--text-dim)' }}>Modo de Extracción:</span>
-                  <span style={{ fontWeight: 600, color: '#fff' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '6px' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>{t('modals.package_details.extraction_mode')}</span>
+                  <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>
                     {selectedPackageDetails.search_strategy?.mode_label || (selectedPackageDetails.source_mode === 'ids' ? 'Lista de IDs' : selectedPackageDetails.source_mode === 'upload' ? 'Archivo Subido' : 'Filtros Dinámicos OpenAlex')}
                   </span>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ color: 'var(--text-dim)' }}>Criterios y Filtros Aplicados:</span>
+                  <span style={{ color: 'var(--text-dim)' }}>{t('modals.package_details.criteria_applied')}</span>
                   <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '8px 12px', borderRadius: '6px', color: 'var(--text-main)', lineHeight: 1.5, fontSize: '0.78rem' }}>
                     {selectedPackageDetails.search_strategy?.description || 'Consulta procesada sobre la base de datos OpenAlex.'}
                   </div>
@@ -3381,15 +3459,15 @@ export default function App() {
             {/* Excel Reports Breakdown */}
             <div style={{ marginTop: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>
-                  Batería de 48 Tablas Excel Incluidas (16 Entidades × 3 Temporalidades)
+                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                  {t('modals.package_details.excel_battery_title')}
                 </span>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                  Full • 2021-2025 • Trend
+                  {t('modals.package_details.excel_battery_sub')}
                 </span>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: '#0e1526', padding: '12px', borderRadius: '8px', maxHeight: '180px', overflowY: 'auto', fontSize: '0.75rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', maxHeight: '180px', overflowY: 'auto', fontSize: '0.75rem' }}>
                 <div>🌐 1. Locations.xlsx</div>
                 <div>🗺️ 2. Locations Subnational.xlsx</div>
                 <div>🏢 3. Organizations.xlsx</div>
@@ -3418,13 +3496,13 @@ export default function App() {
                 download
               >
                 <Download size={18} />
-                Descargar Paquete ({selectedPackageDetails.zip_size_mb} MB)
+                {t('modals.package_details.download_btn', { size: selectedPackageDetails.zip_size_mb })}
               </a>
               <button
                 className="btn btn-secondary"
                 onClick={() => setSelectedPackageDetails(null)}
               >
-                Cerrar
+                {t('common.close')}
               </button>
             </div>
           </div>
@@ -3457,8 +3535,8 @@ export default function App() {
               <AlertOctagon size={32} />
             </div>
 
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '10px', color: '#fff' }}>
-              Acceso Restringido
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '10px', color: 'var(--text-main)' }}>
+              {t('modals.unauthorized.title')}
             </h3>
 
             <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: '1.6', marginBottom: '24px' }}>
@@ -3470,7 +3548,7 @@ export default function App() {
               style={{ width: '100%', justifyContent: 'center', padding: '12px' }}
               onClick={() => setUnauthorizedError(null)}
             >
-              Entendido
+              {t('modals.unauthorized.dismiss')}
             </button>
           </div>
         </div>

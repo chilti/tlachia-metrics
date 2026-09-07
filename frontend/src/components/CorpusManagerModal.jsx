@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
+import { useI18n } from '../i18n'
 import {
   FolderArchive,
   Save,
@@ -32,6 +33,7 @@ export default function CorpusManagerModal({
   packages = [],
   user
 }) {
+  const { t } = useI18n()
   const [activeTab, setActiveTab] = useState(mode)
   const [savedCorpuses, setSavedCorpuses] = useState([])
   const [loading, setLoading] = useState(false)
@@ -94,14 +96,14 @@ export default function CorpusManagerModal({
   const handleSaveCurrentCorpus = (e) => {
     e.preventDefault()
     if (!corpusName.trim()) {
-      setError('Por favor asigna un nombre a este corpus.')
+      setError(t('modals.corpus.error_name_required'))
       return
     }
 
     const activeUser = getActiveUser()
     const targetOrcid = activeUser?.orcid || ''
     if (!targetOrcid) {
-      setError('Debes iniciar sesión con ORCID para guardar un corpus.')
+      setError(t('modals.corpus.error_orcid_required'))
       return
     }
 
@@ -130,7 +132,7 @@ export default function CorpusManagerModal({
     })
       .then(res => {
         setIsSaving(false)
-        setSuccessMsg(corpusIdToSave ? `¡Corpus "${corpusName}" actualizado exitosamente!` : `¡Corpus "${corpusName}" guardado exitosamente!`)
+        setSuccessMsg(corpusIdToSave ? t('modals.corpus.success_updated', { name: corpusName }) : t('modals.corpus.success_saved', { name: corpusName }))
         fetchSavedCorpuses()
         setTimeout(() => {
           setActiveTab('list')
@@ -145,7 +147,7 @@ export default function CorpusManagerModal({
   }
 
   const handleDeleteCorpus = (corpusId, name) => {
-    if (!window.confirm(`¿Estás seguro de eliminar el corpus guardado "${name}"?`)) return
+    if (!window.confirm(t('modals.corpus.delete_confirm', { name }))) return
     const activeUser = getActiveUser()
     const targetOrcid = activeUser?.orcid || ''
 
@@ -209,11 +211,11 @@ export default function CorpusManagerModal({
               <FolderArchive size={22} />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>
-                Administrador de Corpus Guardados
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
+                {t('modals.corpus.manager_title')}
               </h2>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', margin: 0 }}>
-                Espacio de trabajo persistente para {user?.name || user?.orcid || 'tu cuenta'}
+                {t('modals.corpus.manager_subtitle', { user: user?.name || user?.orcid || t('modals.corpus.your_account') })}
               </p>
             </div>
           </div>
@@ -246,7 +248,7 @@ export default function CorpusManagerModal({
               fontSize: '0.88rem'
             }}
           >
-            📂 Mis Corpus ({savedCorpuses.length})
+            {t('modals.corpus.tab_my_corpora', { count: savedCorpuses.length })}
           </button>
           <button
             onClick={() => setActiveTab('save')}
@@ -261,7 +263,7 @@ export default function CorpusManagerModal({
               fontSize: '0.88rem'
             }}
           >
-            💾 Guardar Corpus Actual
+            {t('modals.corpus.tab_save_current')}
           </button>
         </div>
 
@@ -285,13 +287,13 @@ export default function CorpusManagerModal({
             {loading ? (
               <div style={{ textAlign: 'center', padding: '40px', color: 'var(--accent-primary)' }}>
                 <Loader2 size={30} className="animate-spin" style={{ margin: '0 auto 10px' }} />
-                <p style={{ fontSize: '0.85rem' }}>Cargando corpus guardados...</p>
+                <p style={{ fontSize: '0.85rem' }}>{t('modals.corpus.loading')}</p>
               </div>
             ) : savedCorpuses.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>
                 <FolderArchive size={40} style={{ opacity: 0.4, margin: '0 auto 12px' }} />
-                <p style={{ fontSize: '0.95rem', fontWeight: 600 }}>No tienes ningún corpus guardado aún</p>
-                <p style={{ fontSize: '0.8rem' }}>Puedes delimitar criterios en el Conformador y guardarlo para reutilizarlo en cualquier momento.</p>
+                <p style={{ fontSize: '0.95rem', fontWeight: 600 }}>{t('modals.corpus.empty_title')}</p>
+                <p style={{ fontSize: '0.8rem' }}>{t('modals.corpus.empty_desc')}</p>
                 <button
                   onClick={() => setActiveTab('save')}
                   style={{
@@ -305,7 +307,7 @@ export default function CorpusManagerModal({
                     cursor: 'pointer'
                   }}
                 >
-                  Guardar configuración actual
+                  {t('modals.corpus.save_current_config')}
                 </button>
               </div>
             ) : (
@@ -345,22 +347,22 @@ export default function CorpusManagerModal({
                           </span>
                           {corpus.lineage_type === 'intellectual_base' && (
                             <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(129, 140, 248, 0.2)', color: '#818cf8', fontWeight: 700 }}>
-                              📚 Base Intelectual
+                              {t('modals.corpus.badge_intellectual_base')}
                             </span>
                           )}
                           {corpus.lineage_type === 'citing_impact' && (
                             <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(251, 191, 36, 0.2)', color: '#fbbf24', fontWeight: 700 }}>
-                              ✨ Impacto (Citantes)
+                              {t('modals.corpus.badge_citing_impact')}
                             </span>
                           )}
                           {(corpus.lineage_type === 'scopus_custom' || corpus.source_mode === 'scopus') && (
                             <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', fontWeight: 700 }}>
-                              🔬 Scopus Query
+                              {t('modals.corpus.badge_scopus_query')}
                             </span>
                           )}
                           {matchingPkg && (
                             <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', fontWeight: 700, border: '1px solid rgba(16, 185, 129, 0.35)' }}>
-                              ⚡ Métricas Calculadas (48 Tablas)
+                              {t('modals.corpus.badge_metrics_ready')}
                             </span>
                           )}
                         </div>
@@ -391,7 +393,7 @@ export default function CorpusManagerModal({
                             title="Ver tablas analíticas calculadas de este corpus"
                           >
                             <FileSpreadsheet size={14} />
-                            <span>Ver Tablas</span>
+                            <span>{t('modals.corpus.btn_view_tables')}</span>
                           </button>
                         )}
                         <button
@@ -411,7 +413,7 @@ export default function CorpusManagerModal({
                             boxShadow: '0 2px 8px rgba(56, 189, 248, 0.3)'
                           }}
                         >
-                          <span>Cargar</span>
+                          <span>{t('modals.corpus.btn_load')}</span>
                           <ArrowRight size={14} />
                         </button>
                         <button
@@ -433,12 +435,12 @@ export default function CorpusManagerModal({
 
                     {/* Metadata Chips */}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      <span>📅 Guardado: {corpus.updated_at || corpus.created_at}</span>
+                      <span>{t('modals.corpus.meta_saved')} {corpus.updated_at || corpus.created_at}</span>
                       {corpus.total_works_estimated > 0 && (
-                        <span>• 📊 ~{corpus.total_works_estimated.toLocaleString()} obras</span>
+                        <span>{t('modals.corpus.meta_works', { count: corpus.total_works_estimated.toLocaleString() })}</span>
                       )}
                       {corpus.parent_corpus_id && (
-                        <span style={{ color: 'var(--text-dim)' }}>• 🔗 Derivado de: <strong style={{ color: '#fff' }}>{corpus.parent_corpus_id}</strong></span>
+                        <span style={{ color: 'var(--text-dim)' }}>{t('modals.corpus.meta_derived_from')} <strong style={{ color: 'var(--text-main)' }}>{corpus.parent_corpus_id}</strong></span>
                       )}
                       {corpus.filters?.country_code && (
                         <span>• 🇲🇽 País: {corpus.filters.country_code}</span>
@@ -475,7 +477,7 @@ export default function CorpusManagerModal({
               }}>
                 <div>
                   <div style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--accent-primary)' }}>
-                    📌 Corpus en edición:
+                    {t('modals.corpus.editing_notice')}
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-main)', fontWeight: 600 }}>
                     {currentCorpusState.corpusName}
@@ -500,7 +502,7 @@ export default function CorpusManagerModal({
                     }}
                   >
                     <RefreshCw size={13} />
-                    <span>Sobrescribir / Actualizar</span>
+                    <span>{t('modals.corpus.btn_overwrite')}</span>
                   </button>
                   <button
                     type="button"
@@ -520,27 +522,27 @@ export default function CorpusManagerModal({
                     }}
                   >
                     <Plus size={13} />
-                    <span>Guardar como Nuevo</span>
+                    <span>{t('modals.corpus.btn_save_as_new')}</span>
                   </button>
                 </div>
               </div>
             )}
 
             <div>
-              <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px' }}>
-                Nombre del Corpus *
+              <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px', color: 'var(--text-main)' }}>
+                {t('modals.corpus.field_name')}
               </label>
               <input
                 type="text"
-                placeholder="Ej. Producción Científica Medicina México 2018-2024"
+                placeholder={t('modals.corpus.field_name_placeholder')}
                 value={corpusName}
                 onChange={(e) => setCorpusName(e.target.value)}
                 style={{
                   width: '100%',
                   padding: '11px 14px',
                   borderRadius: '10px',
-                  background: 'rgba(0, 0, 0, 0.25)',
-                  border: '1px solid var(--border-color)',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
                   color: 'var(--text-main)',
                   fontSize: '0.9rem',
                   fontWeight: 600
@@ -550,11 +552,11 @@ export default function CorpusManagerModal({
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px' }}>
-                Descripción o Notas (Opcional)
+              <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px', color: 'var(--text-main)' }}>
+                {t('modals.corpus.field_desc')}
               </label>
               <textarea
-                placeholder="Notas de contexto o metodología utilizada para este corpus..."
+                placeholder={t('modals.corpus.field_desc_placeholder')}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
@@ -562,8 +564,8 @@ export default function CorpusManagerModal({
                   width: '100%',
                   padding: '10px 14px',
                   borderRadius: '10px',
-                  background: 'rgba(0, 0, 0, 0.25)',
-                  border: '1px solid var(--border-color)',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
                   color: 'var(--text-main)',
                   fontSize: '0.85rem'
                 }}
@@ -573,11 +575,11 @@ export default function CorpusManagerModal({
             {/* Current Summary Preview */}
             <div style={{ padding: '14px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.05)', border: '1px solid rgba(56, 189, 248, 0.2)', fontSize: '0.82rem' }}>
               <div style={{ fontWeight: 700, color: 'var(--accent-primary)', marginBottom: '4px' }}>
-                Resumen de criterios a guardar:
+                {t('modals.corpus.summary_title')}
               </div>
               <p style={{ margin: '0 0 6px', color: 'var(--text-dim)' }}>
-                Modo: <strong>{currentCorpusState.sourceMode === 'ids' ? 'DOIs / Work IDs' : (currentCorpusState.sourceMode === 'upload' ? 'Archivo Subido' : 'Filtros Paramétricos')}</strong>
-                {currentCorpusState.totalWorksEstimated > 0 && ` • Obras estimadas: ~${currentCorpusState.totalWorksEstimated.toLocaleString()}`}
+                {t('modals.corpus.mode_label')} <strong>{currentCorpusState.sourceMode === 'ids' ? t('modals.corpus.mode_ids') : (currentCorpusState.sourceMode === 'upload' ? t('modals.corpus.mode_upload') : t('modals.corpus.mode_filters'))}</strong>
+                {currentCorpusState.totalWorksEstimated > 0 && ` ${t('modals.corpus.estimated_works', { count: currentCorpusState.totalWorksEstimated.toLocaleString() })}`}
               </p>
             </div>
 
@@ -603,17 +605,17 @@ export default function CorpusManagerModal({
               {isSaving ? (
                 <>
                   <Loader2 size={18} className="animate-spin" />
-                  <span>Guardando...</span>
+                  <span>{t('modals.corpus.btn_saving')}</span>
                 </>
               ) : (!saveAsNew && currentCorpusState.corpusId) ? (
                 <>
                   <RefreshCw size={18} />
-                  <span>Actualizar Corpus Guardado</span>
+                  <span>{t('modals.corpus.btn_update')}</span>
                 </>
               ) : (
                 <>
                   <Save size={18} />
-                  <span>Guardar Nuevo Corpus</span>
+                  <span>{t('modals.corpus.btn_save_new')}</span>
                 </>
               )}
             </button>

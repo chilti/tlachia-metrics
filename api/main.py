@@ -66,7 +66,9 @@ from api.routers.citations import (
     get_single_work_citing_endpoint,
     get_referenced_works_endpoint,
     get_single_work_references_endpoint,
-    derive_referenced_corpus_endpoint
+    derive_referenced_corpus_endpoint,
+    get_builder_citing_works_endpoint,
+    get_builder_referenced_works_endpoint
 )
 from api.routers.scopus_search import (
     get_scopus_status_endpoint,
@@ -80,9 +82,74 @@ logger = logging.getLogger('tlachia_api')
 
 engine = TlachIAMetricsEngine()
 
-# Almacén en memoria de trabajos en segundo plano
-JOBS_STORE: Dict[str, Dict[str, Any]] = {}
+# Almacén compartido de tareas entre workers (Persistencia en disco para evitar 404 en multi-worker)
+JOBS_CACHE_DIR = ROOT_DIR / 'data' / 'jobs'
+JOBS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+class SharedJobStore:
+    def __init__(self, cache_dir: Path = JOBS_CACHE_DIR):
+        self.cache_dir = cache_dir
+        self._lock = threading.Lock()
+
+    def get(self, job_id: str, default=None):
+        val = self._read(job_id)
+        return val if val is not None else default
+
+    def __getitem__(self, job_id: str):
+        val = self._read(job_id)
+        if val is None:
+            raise KeyError(job_id)
+        return val
+
+    def __setitem__(self, job_id: str, data: Dict[str, Any]):
+        self._write(job_id, data)
+
+    def __contains__(self, job_id: str):
+        return (self.cache_dir / f"{job_id}.json").exists()
+
+    def values(self) -> List[Dict[str, Any]]:
+        res = []
+        with self._lock:
+            for f in self.cache_dir.glob("job_*.json"):
+                try:
+                    with open(f, 'r', encoding='utf-8') as fp:
+                        res.append(json.load(fp))
+                except Exception:
+                    pass
+        return res
+
+    def _read(self, job_id: str) -> Optional[Dict[str, Any]]:
+        f = self.cache_dir / f"{job_id}.json"
+        if f.exists():
+            try:
+                with open(f, 'r', encoding='utf-8') as fp:
+                    return json.load(fp)
+            except Exception:
+                pass
+        return None
+
+    def _write(self, job_id: str, data: Dict[str, Any]):
+        f = self.cache_dir / f"{job_id}.json"
+        temp_f = self.cache_dir / f"{job_id}.tmp.{os.getpid()}"
+        try:
+            with open(temp_f, 'w', encoding='utf-8') as fp:
+                json.dump(data, fp, ensure_ascii=False, indent=2)
+            temp_f.replace(f)
+        except Exception as e:
+            logger.warning(f"Error escribiendo job {job_id}: {e}")
+            if temp_f.exists():
+                try:
+                    temp_f.unlink()
+                except Exception:
+                    pass
+
+JOBS_STORE = SharedJobStore()
 JOBS_LOCK = threading.Lock()
+
+JSON_JOBS_CACHE_DIR = ROOT_DIR / 'data' / 'json_jobs'
+JSON_JOBS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+JSON_JOBS_STORE = SharedJobStore(JSON_JOBS_CACHE_DIR)
+JSON_JOBS_LOCK = threading.Lock()
 
 TEMP_UPLOADS_DIR = ROOT_DIR / 'data' / 'temp_uploads'
 TEMP_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -688,13 +755,16 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
         job['started_at'] = datetime.now().isoformat()
         job['stage_label'] = 'Extrayendo y estructurando corpus...'
         job['progress'] = 5
+        JOBS_STORE[job_id] = job
 
     def progress_callback(pct: int, msg: str):
         with JOBS_LOCK:
-            if job_id in JOBS_STORE:
-                JOBS_STORE[job_id]['progress'] = pct
-                JOBS_STORE[job_id]['stage_label'] = msg
-                JOBS_STORE[job_id]['updated_at'] = datetime.now().isoformat()
+            job = JOBS_STORE.get(job_id)
+            if job:
+                job['progress'] = pct
+                job['stage_label'] = msg
+                job['updated_at'] = datetime.now().isoformat()
+                JOBS_STORE[job_id] = job
 
     try:
         source_mode = payload.get('source_mode', 'filters')
@@ -729,7 +799,10 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             raise ValueError("No se encontraron artículos para el corpus especificado.")
 
         with JOBS_LOCK:
-            JOBS_STORE[job_id]['total_works'] = len(df)
+            job = JOBS_STORE.get(job_id)
+            if job:
+                job['total_works'] = len(df)
+                JOBS_STORE[job_id] = job
 
         # Procesar configuración de periodos consecutivos y ventanas temporales
         time_windows = payload.get('time_windows', {})
@@ -738,17 +811,25 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
         if raw_periods and isinstance(raw_periods, list):
             periods_list = [(int(p[0]), int(p[1])) for p in raw_periods if len(p) >= 2]
 
-        # Ejecutar pipeline de agregadores, Excel + Parquets + JSON (sin generar ZIP automáticamente)
+        # Ejecutar pipeline de agregadores, Excel + Parquets (sin generar JSON ni ZIP automáticamente)
         result = engine.process_and_export_package(
             df=df,
             package_name=package_name,
             periods=periods_list,
             export_parquet=True,
-            export_json=True,
+            export_json=False,
             create_zip=False,
             raw_json_source=raw_json_source,
             progress_callback=progress_callback
         )
+
+        # Persistir identificadores del corpus para conformación bajo demanda del dataset JSON
+        try:
+            ids_parquet_file = EXPORTS_DIR / package_name / 'corpus_work_ids.parquet'
+            if 'id' in df.columns:
+                df[['id']].to_parquet(ids_parquet_file, index=False)
+        except Exception as e:
+            logger.warning(f"No se pudo guardar corpus_work_ids.parquet: {e}")
 
         strategy = build_search_strategy_summary(source_mode, payload)
         owner_orcid = payload.get('user_orcid') or ''
@@ -765,12 +846,14 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             'ids_count': len(payload.get('ids', [])) if source_mode == 'ids' else None,
             'uploaded_file': payload.get('file_path') if source_mode == 'upload' else None,
             'created_at': datetime.now().isoformat(),
-            'total_excel_files': result.get('total_excel_files', 48),
+            'total_csv_files': result.get('total_csv_files', 0),
+            'total_excel_files': result.get('total_excel_files', 0),
             'tables_summary': result.get('tables_summary', {}),
             'search_strategy': strategy,
             'owner_orcid': owner_orcid,
             'owner_name': owner_name,
-            'has_zip': False
+            'has_zip': False,
+            'has_json': False
         }
         manifest_file = EXPORTS_DIR / package_name / "manifest.json"
         try:
@@ -780,14 +863,16 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             logger.warning(f"No se pudo guardar manifest.json: {e}")
 
         with JOBS_LOCK:
-            JOBS_STORE[job_id]['status'] = 'completed'
-            JOBS_STORE[job_id]['progress'] = 100
-            JOBS_STORE[job_id]['stage_label'] = '¡Proceso finalizado con éxito!'
-            JOBS_STORE[job_id]['completed_at'] = datetime.now().isoformat()
-            JOBS_STORE[job_id]['result'] = {
+            job = JOBS_STORE.get(job_id) or {}
+            job['status'] = 'completed'
+            job['progress'] = 100
+            job['stage_label'] = '¡Proceso finalizado con éxito!'
+            job['completed_at'] = datetime.now().isoformat()
+            job['result'] = {
                 'package_name': package_name,
                 'total_works': len(df),
-                'total_excel_files': result.get('total_excel_files', 48),
+                'total_csv_files': result.get('total_csv_files', 0),
+                'total_excel_files': result.get('total_excel_files', 0),
                 'zip_path': None,
                 'download_url': None,
                 'tables_summary': result.get('tables_summary', {}),
@@ -795,15 +880,18 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
                 'owner_orcid': owner_orcid,
                 'owner_name': owner_name
             }
+            JOBS_STORE[job_id] = job
 
     except Exception as e:
         logger.error(f"Error en job {job_id}: {e}", exc_info=True)
         with JOBS_LOCK:
-            JOBS_STORE[job_id]['status'] = 'failed'
-            JOBS_STORE[job_id]['progress'] = 100
-            JOBS_STORE[job_id]['stage_label'] = f"Error: {str(e)}"
-            JOBS_STORE[job_id]['error'] = str(e)
-            JOBS_STORE[job_id]['completed_at'] = datetime.now().isoformat()
+            job = JOBS_STORE.get(job_id) or {}
+            job['status'] = 'failed'
+            job['progress'] = 100
+            job['stage_label'] = f"Error: {str(e)}"
+            job['error'] = str(e)
+            job['completed_at'] = datetime.now().isoformat()
+            JOBS_STORE[job_id] = job
 
 
 async def create_computation_job(request: Request):
@@ -891,14 +979,16 @@ async def list_exported_packages(request: Request):
             if item.is_dir():
                 zip_file = item / f"{item.name}.zip"
                 json_file = item / f"{item.name}_openalex_works.json"
+                csv_dir = item / "csv_reports"
                 excel_dir = item / "excel_reports"
                 parquet_dir = item / "parquet_tables"
                 manifest_file = item / "manifest.json"
 
-                # Considerar paquete válido si tiene zip, excel_reports, parquet_tables o manifest
-                if zip_file.exists() or excel_dir.exists() or parquet_dir.exists() or manifest_file.exists():
+                # Considerar paquete válido si tiene zip, csv_reports, excel_reports, parquet_tables o manifest
+                if zip_file.exists() or csv_dir.exists() or excel_dir.exists() or parquet_dir.exists() or manifest_file.exists():
                     has_zip = zip_file.exists()
                     stat = zip_file.stat() if has_zip else item.stat()
+                    csv_count = len(list(csv_dir.glob('*.csv'))) if csv_dir.exists() else 0
                     excel_count = len(list(excel_dir.glob('*.xlsx'))) if excel_dir.exists() else 0
                     
                     manifest_data = {}
@@ -932,6 +1022,8 @@ async def list_exported_packages(request: Request):
                     zip_size_bytes = zip_file.stat().st_size if has_zip else 0
                     zip_size_mb = round(zip_size_bytes / (1024 * 1024), 2) if has_zip else 0
 
+                    is_json_generating = JSON_JOBS_STORE.get(item.name, {}).get('status') == 'running'
+
                     packages.append({
                         'package_name': item.name,
                         'name': item.name,
@@ -941,6 +1033,8 @@ async def list_exported_packages(request: Request):
                         'zip_size_mb': zip_size_mb,
                         'created_at': manifest_data.get('created_at') or datetime.fromtimestamp(stat.st_mtime).isoformat(),
                         'has_json': json_file.exists(),
+                        'json_generating': is_json_generating,
+                        'csv_files_count': csv_count,
                         'excel_files_count': excel_count,
                         'total_works': total_works,
                         'source_mode': manifest_data.get('source_mode', 'filters'),
@@ -980,12 +1074,33 @@ async def generate_package_zip_endpoint(request: Request):
     requester_orcid = request.headers.get('X-User-ORCID', '').strip() or request.query_params.get('orcid', '').strip()
 
     # Recolectar archivos para el zip
+    csv_dir = pkg_dir / "csv_reports"
     excel_dir = pkg_dir / "excel_reports"
     parquet_dir = pkg_dir / "parquet_tables"
     json_file = pkg_dir / f"{package_name}_openalex_works.json"
     manifest_file = pkg_dir / "manifest.json"
 
-    # Si no existe la Matriz Consolidada multihistorial pero sí existen matrices individuales, generarla
+    # Si no existe la Matriz Consolidada multihistorial CSV pero sí existen matrices individuales, generarla
+    master_matrix_csv_path = csv_dir / 'Matriz_Desempeño_Longitudinal_Consolidada.csv'
+    if csv_dir.exists() and not master_matrix_csv_path.exists():
+        perf_files = list(csv_dir.glob('*Performance Matrix.csv'))
+        if perf_files:
+            try:
+                import pandas as pd
+                c_dfs = []
+                for pf in perf_files:
+                    entity_name = pf.stem.replace(' Performance Matrix', '')
+                    m_df = pd.read_csv(pf)
+                    m_df.insert(0, 'Entity', entity_name)
+                    c_dfs.append(m_df)
+                if c_dfs:
+                    consolidated_df = pd.concat(c_dfs, ignore_index=True)
+                    consolidated_df.to_csv(master_matrix_csv_path, index=False, encoding='utf-8')
+                    logger.info(f"Matriz consolidada CSV generada on-demand: {master_matrix_csv_path}")
+            except Exception as e:
+                logger.warning(f"No se pudo generar Matriz_Desempeño_Longitudinal_Consolidada.csv on-demand: {e}")
+
+    # Si no existe la Matriz Consolidada multihistorial Excel pero sí existen matrices individuales, generarla
     master_matrix_path = excel_dir / 'Matriz_Desempeño_Longitudinal_Consolidada.xlsx'
     if excel_dir.exists() and not master_matrix_path.exists():
         perf_files = list(excel_dir.glob('*Performance Matrix.xlsx'))
@@ -1004,6 +1119,8 @@ async def generate_package_zip_endpoint(request: Request):
                 logger.warning(f"No se pudo generar Matriz_Desempeño_Longitudinal_Consolidada on-demand: {e}")
 
     files_to_zip = []
+    if csv_dir.exists():
+        files_to_zip.extend(list(csv_dir.glob('*.csv')))
     if excel_dir.exists():
         files_to_zip.extend(list(excel_dir.glob('*.xlsx')))
     if parquet_dir.exists():
@@ -1014,7 +1131,7 @@ async def generate_package_zip_endpoint(request: Request):
         files_to_zip.append(manifest_file)
 
     if not files_to_zip:
-        return JSONResponse({'error': 'No se encontraron reportes Excel, Parquet o JSON para empaquetar.'}, status_code=400)
+        return JSONResponse({'error': 'No se encontraron reportes CSV, Excel, Parquet o JSON para empaquetar.'}, status_code=400)
 
     zip_path = pkg_dir / f"{package_name}.zip"
     try:
@@ -1075,7 +1192,191 @@ async def generate_package_zip_endpoint(request: Request):
     })
 
 
+def _generate_package_json_worker(package_name: str):
+    logger.info(f"Iniciando conformación de dataset JSON en segundo plano para paquete: {package_name}")
+    try:
+        pkg_dir = EXPORTS_DIR / package_name
+        if not pkg_dir.exists():
+            raise FileNotFoundError(f"Directorio de paquete {package_name} no encontrado en {pkg_dir}.")
+
+        manifest_file = pkg_dir / "manifest.json"
+        manifest_data = {}
+        if manifest_file.exists():
+            try:
+                with open(manifest_file, 'r', encoding='utf-8') as mf:
+                    manifest_data = json.load(mf)
+            except Exception:
+                pass
+
+        df = None
+        work_ids_path = pkg_dir / "corpus_work_ids.parquet"
+        if work_ids_path.exists():
+            try:
+                df_ids = pd.read_parquet(work_ids_path)
+                if 'id' in df_ids.columns and len(df_ids) > 0:
+                    clean_ids = [str(x).replace('https://openalex.org/', '').strip() for x in df_ids['id'].tolist() if pd.notna(x)]
+                    logger.info(f"Recuperando {len(clean_ids)} obras desde ClickHouse usando corpus_work_ids.parquet...")
+                    df = engine.corpus_builder.from_openalex_ids(clean_ids)
+            except Exception as e:
+                logger.warning(f"Error cargando desde corpus_work_ids.parquet: {e}")
+
+        if df is None or len(df) == 0:
+            source_mode = manifest_data.get('source_mode', 'filters')
+            filters = manifest_data.get('filters', {})
+            if source_mode == 'filters' and filters:
+                limit_val = filters.get('limit')
+                limit = int(limit_val) if limit_val and int(limit_val) > 0 else None
+                logger.info(f"Recuperando obras usando filtros de manifest.json...")
+                df = engine.corpus_builder.from_filters(filters, limit=limit)
+            elif source_mode == 'ids' and manifest_data.get('ids'):
+                df = engine.corpus_builder.from_openalex_ids(manifest_data['ids'])
+            elif source_mode == 'upload':
+                uploaded = manifest_data.get('uploaded_file')
+                if uploaded and Path(uploaded).exists():
+                    df = engine.load_corpus(uploaded)
+
+        if df is None or len(df) == 0:
+            raise ValueError(f"No se pudieron recuperar las obras del corpus para {package_name}.")
+
+        json_file_path = pkg_dir / f"{package_name}_openalex_works.json"
+        logger.info(f"Escribiendo dataset JSON consolidado con {len(df)} registros en {json_file_path}...")
+
+        from openalex_indicators_engine.engine import JSONCustomEncoder
+        records = df.to_dict(orient='records')
+        with open(json_file_path, 'w', encoding='utf-8') as jf:
+            jf.write('[\n')
+            for i, rec in enumerate(records):
+                if i > 0:
+                    jf.write(',\n')
+                jf.write(json.dumps(rec, cls=JSONCustomEncoder, ensure_ascii=False))
+            jf.write('\n]\n')
+
+        logger.info(f"Dataset JSON generado exitosamente ({json_file_path.stat().st_size} bytes).")
+
+        # Si existe archivo .ZIP, anexar el archivo JSON directamente al zip
+        zip_file = pkg_dir / f"{package_name}.zip"
+        if zip_file.exists():
+            import zipfile
+            from openalex_indicators_engine.exporters.zip_packager import classify_archive_path
+            arcname = classify_archive_path(json_file_path.name)
+            logger.info(f"Anexando archivo JSON al .ZIP existente: {zip_file} (arcname: {arcname})...")
+            with zipfile.ZipFile(zip_file, 'a', compression=zipfile.ZIP_DEFLATED) as z:
+                z.write(json_file_path, arcname=arcname)
+            manifest_data['zip_size_bytes'] = zip_file.stat().st_size
+
+        # Actualizar manifest.json
+        manifest_data['has_json'] = True
+        manifest_data['json_generated_at'] = datetime.now().isoformat()
+        manifest_data['json_size_bytes'] = json_file_path.stat().st_size
+        try:
+            with open(manifest_file, 'w', encoding='utf-8') as mf:
+                json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"Error actualizando manifest.json: {e}")
+
+        JSON_JOBS_STORE[package_name] = {
+            'status': 'completed',
+            'finished_at': datetime.now().isoformat(),
+            'size_bytes': json_file_path.stat().st_size
+        }
+        logger.info(f"Proceso de conformación JSON completado para {package_name}.")
+
+    except Exception as e:
+        logger.error(f"Error en conformación de JSON para {package_name}: {e}", exc_info=True)
+        JSON_JOBS_STORE[package_name] = {
+            'status': 'failed',
+            'error': str(e),
+            'failed_at': datetime.now().isoformat()
+        }
+
+
+async def generate_package_json_endpoint(request: Request):
+    """
+    Inicia en segundo plano la conformación del dataset consolidado en formato JSON
+    para un paquete cienciométrico previamente calculado.
+    """
+    package_name = request.path_params.get('package_name', '').strip()
+    if not package_name:
+        return JSONResponse({'error': 'Nombre de paquete requerido.'}, status_code=400)
+
+    pkg_dir = EXPORTS_DIR / package_name
+    if not pkg_dir.exists() or not pkg_dir.is_dir():
+        return JSONResponse({'error': f'Paquete "{package_name}" no encontrado en disco.'}, status_code=404)
+
+    current_job = JSON_JOBS_STORE.get(package_name, {})
+    if current_job.get('status') == 'running':
+        return JSONResponse({
+            'status': 'running',
+            'package_name': package_name,
+            'message': 'La conformación del dataset JSON ya está en progreso en segundo plano.'
+        })
+
+    json_file = pkg_dir / f"{package_name}_openalex_works.json"
+    if json_file.exists():
+        # Si ya existe el JSON y hay ZIP, verificar que esté dentro del ZIP
+        zip_file = pkg_dir / f"{package_name}.zip"
+        if zip_file.exists():
+            import zipfile
+            from openalex_indicators_engine.exporters.zip_packager import classify_archive_path
+            try:
+                with zipfile.ZipFile(zip_file, 'r') as zf:
+                    names = zf.namelist()
+                arcname = classify_archive_path(json_file.name)
+                if arcname not in names:
+                    with zipfile.ZipFile(zip_file, 'a', compression=zipfile.ZIP_DEFLATED) as zf:
+                        zf.write(json_file, arcname=arcname)
+            except Exception as e:
+                logger.warning(f"No se pudo asegurar json en zip existente: {e}")
+
+        JSON_JOBS_STORE[package_name] = {'status': 'completed', 'size_bytes': json_file.stat().st_size}
+        return JSONResponse({
+            'status': 'completed',
+            'package_name': package_name,
+            'message': 'El dataset JSON ya existe y está disponible.'
+        })
+
+    JSON_JOBS_STORE[package_name] = {
+        'status': 'running',
+        'started_at': datetime.now().isoformat()
+    }
+
+    t = threading.Thread(target=_generate_package_json_worker, args=(package_name,), daemon=True)
+    t.start()
+
+    return JSONResponse({
+        'status': 'started',
+        'package_name': package_name,
+        'message': 'Conformación del dataset JSON iniciada en segundo plano.'
+    })
+
+
+async def get_package_json_status_endpoint(request: Request):
+    """
+    Consulta el estado de generación del archivo JSON para un paquete.
+    """
+    package_name = request.path_params.get('package_name', '').strip()
+    if not package_name:
+        return JSONResponse({'error': 'Nombre de paquete requerido.'}, status_code=400)
+
+    pkg_dir = EXPORTS_DIR / package_name
+    json_file = pkg_dir / f"{package_name}_openalex_works.json"
+    has_json = json_file.exists()
+
+    job = JSON_JOBS_STORE.get(package_name, {})
+    status = job.get('status')
+    if not status:
+        status = 'completed' if has_json else 'idle'
+
+    return JSONResponse({
+        'package_name': package_name,
+        'status': status,
+        'has_json': has_json,
+        'error': job.get('error')
+    })
+
+
 AVAILABLE_INDICATOR_TABLES = [
+    {"id": "corpus", "name": "Corpus Completo (Baseline)", "icon": "📦", "slug": "corpus"},
     {"id": "locations", "name": "Locations (Países)", "icon": "🌐", "slug": "locations"},
     {"id": "locations_subnational", "name": "Locations Subnational (Estados)", "icon": "🗺️", "slug": "locations_subnational"},
     {"id": "organizations", "name": "Organizations (Instituciones)", "icon": "🏢", "slug": "organizations"},
@@ -1095,6 +1396,7 @@ AVAILABLE_INDICATOR_TABLES = [
 ]
 
 TABLE_SLUG_MAP = {
+    "corpus": "corpus",
     "locations": "locations",
     "locations_subnational": "locations_subnational",
     "organizations": "organizations",
@@ -1163,6 +1465,8 @@ async def preview_table_endpoint(request: Request):
     # Normalizar período
     if period in ('performance_matrix', 'matrix', 'matriz', 'desempeno', 'desempeño'):
         period_clean = 'performance_matrix'
+    elif period in ('consecutive_periods', 'consecutive', 'periodos_consecutivos'):
+        period_clean = 'consecutive_periods'
     elif period in ('recent', '2021-2025'):
         period_clean = 'recent'
     elif period in ('trend', 'anual'):
@@ -1189,10 +1493,17 @@ async def preview_table_endpoint(request: Request):
             # Fallback para recent si no existe pero hay periodos
             if period_clean == 'recent':
                 for f in sorted(parquet_dir.glob(f"{table_slug}_*.parquet")):
-                    if 'full' not in f.name and 'trend' not in f.name and 'matrix' not in f.name:
+                    if 'full' not in f.name and 'trend' not in f.name and 'matrix' not in f.name and 'consecutive' not in f.name:
                         parquet_path = f
                         found = True
                         break
+            if not found:
+                # Fallback inteligente: si el periodo solicitado no existe para esta entidad, pero existe full, cargar full
+                fallback_full = parquet_dir / f"{table_slug}_full.parquet"
+                if fallback_full.exists():
+                    parquet_path = fallback_full
+                    period_clean = 'full'
+                    found = True
             if not found:
                 return JSONResponse({
                     'error': f"Tabla '{table_id}' ({period_clean}) no encontrada en el paquete.",
@@ -1223,23 +1534,31 @@ async def preview_table_endpoint(request: Request):
         end_idx = start_idx + limit
 
         page_df = df.iloc[start_idx:end_idx].copy()
-        page_df = page_df.replace([np.inf, -np.inf], None)
-        page_df = page_df.where(pd.notnull(page_df), None)
-
-        records = page_df.to_dict(orient='records')
+        raw_records = page_df.to_dict(orient='records')
+        # Sanitizar estrictamente valores NaN e Inf a None para cumplimiento estricto del RFC JSON
+        records = [
+            {
+                k: (None if pd.isna(v) or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))) else v)
+                for k, v in row.items()
+            }
+            for row in raw_records
+        ]
         columns = list(df.columns)
 
-        # Descubrir periodos disponibles dinámicamente en este paquete
+        # Descubrir periodos disponibles dinámicamente en este paquete para la entidad específica
         available_periods = [{'id': 'full', 'label': 'Histórico Completo'}]
 
-        if (parquet_dir / f"{table_slug}_performance_matrix.parquet").exists() or any(f.name.endswith('_performance_matrix.parquet') for f in parquet_dir.glob("*.parquet")):
+        if (parquet_dir / f"{table_slug}_performance_matrix.parquet").exists():
             available_periods.append({'id': 'performance_matrix', 'label': 'Matriz de Desempeño'})
+
+        if (parquet_dir / f"{table_slug}_consecutive_periods.parquet").exists():
+            available_periods.append({'id': 'consecutive_periods', 'label': 'Periodos Consecutivos (Δ Interperiodo)'})
 
         consecutive_periods = []
         for p_file in sorted(parquet_dir.glob(f"{table_slug}_*.parquet")):
             stem = p_file.stem
             suffix = stem[len(table_slug)+1:]
-            if suffix not in ('full', 'trend', 'performance_matrix', 'recent'):
+            if suffix not in ('full', 'trend', 'performance_matrix', 'recent', 'consecutive_periods'):
                 consecutive_periods.append(suffix)
         
         for cp in consecutive_periods:
@@ -1249,7 +1568,7 @@ async def preview_table_endpoint(request: Request):
         if not consecutive_periods and (parquet_dir / f"{table_slug}_recent.parquet").exists():
             available_periods.append({'id': 'recent', 'label': 'Reciente (2021-2025)'})
 
-        if (parquet_dir / f"{table_slug}_trend.parquet").exists() or any(f.name.endswith('_trend.parquet') for f in parquet_dir.glob("*.parquet")):
+        if (parquet_dir / f"{table_slug}_trend.parquet").exists():
             available_periods.append({'id': 'trend', 'label': 'Tendencia Anual'})
 
         return JSONResponse({
@@ -1380,6 +1699,8 @@ routes = [
     Route('/api/jobs', list_jobs, methods=['GET']),
     Route('/api/indicators/packages', list_exported_packages, methods=['GET']),
     Route('/api/indicators/packages/{package_name}/generate-zip', generate_package_zip_endpoint, methods=['POST']),
+    Route('/api/indicators/packages/{package_name}/generate-json', generate_package_json_endpoint, methods=['POST']),
+    Route('/api/indicators/packages/{package_name}/json-status', get_package_json_status_endpoint, methods=['GET']),
     Route('/api/indicators/table-preview/{package_name}', preview_table_endpoint, methods=['GET']),
     Route('/api/citations/citing-works/{package_name}', get_citing_works_endpoint, methods=['GET']),
     Route('/api/citations/work/{work_id:path}', get_single_work_citing_endpoint, methods=['GET']),
@@ -1389,6 +1710,8 @@ routes = [
     Route('/api/citations/work-references', get_single_work_references_endpoint, methods=['GET']),
     Route('/api/citations/derive-corpus', derive_citing_corpus_endpoint, methods=['POST']),
     Route('/api/citations/derive-referenced-corpus', derive_referenced_corpus_endpoint, methods=['POST']),
+    Route('/api/citations/builder/citing-works', get_builder_citing_works_endpoint, methods=['POST']),
+    Route('/api/citations/builder/referenced-works', get_builder_referenced_works_endpoint, methods=['POST']),
     Route('/api/indicators/packages/{package_name}', delete_exported_package, methods=['DELETE']),
     Route('/api/indicators/delete/{package_name}', delete_exported_package, methods=['DELETE', 'POST']),
     Route('/api/indicators/download/{package_name}', download_indicators_zip, methods=['GET']),

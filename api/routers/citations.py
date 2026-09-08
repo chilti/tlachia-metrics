@@ -210,43 +210,7 @@ def _extract_entity_work_ids(works: list, entity_type: str = None, entity_name: 
     return list(dict.fromkeys(matching_ids))
 
 
-async def get_citing_works_endpoint(request: Request):
-    """
-    Endpoint principal para obtener las obras citantes de una entidad o corpus.
-    Ejecuta el pipeline cienciométrico en 2 etapas en ClickHouse sin JOINs.
-    """
-    auth_orcid = _check_auth(request)
-    if not auth_orcid:
-        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
-
-    package_name = request.path_params.get('package_name', '').strip()
-    entity_type = request.query_params.get('entity_type', '').strip().lower()
-    entity_name = request.query_params.get('entity_name', '').strip()
-    page = max(1, int(request.query_params.get('page', 1)))
-    limit = max(5, min(200, int(request.query_params.get('limit', 25))))
-    sort_by = request.query_params.get('sort_by', 'cited_by_count').strip()
-    sort_order = request.query_params.get('sort_order', 'desc').strip().lower()
-    search_q = request.query_params.get('q', '').strip()
-
-    target_dir = EXPORTS_DIR / package_name
-    if not target_dir.exists():
-        return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
-
-    # 1. Cargar obras del corpus desde JSON
-    json_path = target_dir / f"{package_name}_openalex_works.json"
-    corpus_works = []
-    if json_path.exists():
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                corpus_works = json.load(f)
-        except Exception as e:
-            logger.warning(f"No se pudo leer JSON del corpus {package_name}: {e}")
-
-    if not corpus_works:
-        return JSONResponse({'error': f"Dataset de obras no encontrado para el paquete '{package_name}'."}, status_code=404)
-
-    cited_work_ids = _extract_entity_work_ids(corpus_works, entity_type, entity_name)
-
+def _fetch_citing_details(client, cited_work_ids: list, page: int, limit: int, sort_by: str, sort_order: str, search_q: str, package_name: str, entity_type: str = '', entity_name: str = '') -> JSONResponse:
     if not cited_work_ids:
         return JSONResponse({
             'package_name': package_name,
@@ -262,8 +226,6 @@ async def get_citing_works_endpoint(request: Request):
             'all_citing_ids': []
         })
 
-    # 2. Consultar citantes en rag.work_citations en lotes (Sin JOINs)
-    client = _get_ch_client()
     BATCH_SIZE = 2000
     citing_edges = []
     
@@ -296,7 +258,7 @@ async def get_citing_works_endpoint(request: Request):
             'all_citing_ids': []
         })
 
-    # 3. Consultar metadatos en rag.works_flat para los citantes únicos
+    # Consultar metadatos en rag.works_flat para los citantes únicos
     META_BATCH_SIZE = 2000
     citing_metadata = []
     
@@ -331,7 +293,6 @@ async def get_citing_works_endpoint(request: Request):
                 'subfield_name': r[14] or ''
             })
 
-    # 4. Filtrar por búsqueda textual si aplica
     if search_q:
         sq = search_q.lower()
         citing_metadata = [
@@ -343,14 +304,12 @@ async def get_citing_works_endpoint(request: Request):
             or sq in w['doi'].lower()
         ]
 
-    # 5. Ordenamiento dinámico
     reverse_sort = (sort_order == 'desc')
     if sort_by in ('cited_by_count', 'publication_year', 'fwci', 'percentile'):
         citing_metadata.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse_sort)
     elif sort_by in ('title', 'type', 'oa_status'):
         citing_metadata.sort(key=lambda x: str(x.get(sort_by) or '').lower(), reverse=reverse_sort)
 
-    # 6. Paginación
     total_matching = len(citing_metadata)
     total_pages = (total_matching + limit - 1) // limit if limit > 0 else 1
     start_idx = (page - 1) * limit
@@ -371,6 +330,118 @@ async def get_citing_works_endpoint(request: Request):
         'citing_works': page_data,
         'all_citing_ids': unique_citing_ids
     })
+
+
+async def get_citing_works_endpoint(request: Request):
+    """
+    Endpoint principal para obtener las obras citantes de una entidad o corpus.
+    Ejecuta el pipeline cienciométrico en 2 etapas en ClickHouse sin JOINs.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    package_name = request.path_params.get('package_name', '').strip()
+    entity_type = request.query_params.get('entity_type', '').strip().lower()
+    entity_name = request.query_params.get('entity_name', '').strip()
+    page = max(1, int(request.query_params.get('page', 1)))
+    limit = max(5, min(200, int(request.query_params.get('limit', 25))))
+    sort_by = request.query_params.get('sort_by', 'cited_by_count').strip()
+    sort_order = request.query_params.get('sort_order', 'desc').strip().lower()
+    search_q = request.query_params.get('q', '').strip()
+
+    target_dir = EXPORTS_DIR / package_name
+    if not target_dir.exists():
+        return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
+
+    # 1. Cargar obras del corpus desde JSON o parquet de IDs
+    json_path = target_dir / f"{package_name}_openalex_works.json"
+    ids_path = target_dir / "corpus_work_ids.parquet"
+    corpus_works = []
+    cited_work_ids = []
+    if json_path.exists():
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                corpus_works = json.load(f)
+        except Exception as e:
+            logger.warning(f"No se pudo leer JSON del corpus {package_name}: {e}")
+
+    if corpus_works:
+        cited_work_ids = _extract_entity_work_ids(corpus_works, entity_type, entity_name)
+    elif ids_path.exists() and (entity_type in ('corpus', '', None)):
+        try:
+            import pandas as pd
+            df_ids = pd.read_parquet(ids_path)
+            cited_work_ids = [_normalize_openalex_id(x) for x in df_ids['id'].dropna().tolist()]
+        except Exception as e:
+            logger.warning(f"No se pudo leer corpus_work_ids.parquet: {e}")
+
+    if not cited_work_ids and not corpus_works and not ids_path.exists():
+        return JSONResponse({'error': f"Dataset de obras no encontrado para el paquete '{package_name}'."}, status_code=404)
+
+    client = _get_ch_client()
+    return _fetch_citing_details(
+        client=client,
+        cited_work_ids=cited_work_ids,
+        page=page,
+        limit=limit,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        search_q=search_q,
+        package_name=package_name,
+        entity_type=entity_type,
+        entity_name=entity_name
+    )
+
+
+async def get_builder_citing_works_endpoint(request: Request):
+    """
+    Obtiene las obras citantes directamente para un corpus en conformación en el Corpus Builder.
+    Sin requerir cálculo de indicadores previo.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    source_mode = body.get('source_mode', 'filters')
+    filters = body.get('filters', {})
+    raw_ids = body.get('ids', [])
+    corpus_name = body.get('corpus_name', 'Corpus Asignado')
+    page = max(1, int(body.get('page', 1)))
+    limit = max(5, min(200, int(body.get('limit', 25))))
+    sort_by = body.get('sort_by', 'cited_by_count').strip()
+    sort_order = body.get('sort_order', 'desc').strip().lower()
+    search_q = body.get('q', '').strip()
+
+    client = _get_ch_client()
+
+    if source_mode in ('ids', 'upload') and raw_ids:
+        cited_work_ids = [_normalize_openalex_id(w) for w in raw_ids if w]
+    else:
+        from openalex_indicators_engine.core.corpus_builder import CorpusBuilder
+        cb = CorpusBuilder()
+        clauses = cb._build_where_clauses(filters)
+        where_sql = " AND ".join(clauses) if clauses else "1=1"
+        res = client.query(f"SELECT id FROM rag.works_flat WHERE {where_sql} LIMIT 50000").result_rows
+        cited_work_ids = [_normalize_openalex_id(r[0]) for r in res]
+
+    return _fetch_citing_details(
+        client=client,
+        cited_work_ids=cited_work_ids,
+        page=page,
+        limit=limit,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        search_q=search_q,
+        package_name=corpus_name,
+        entity_type='corpus',
+        entity_name='Corpus Asignado'
+    )
 
 
 async def derive_citing_corpus_endpoint(request: Request):
@@ -599,63 +670,7 @@ async def get_single_work_citing_endpoint(request: Request):
 # SECCIÓN 2: BASE INTELECTUAL (REFERENCIAS BIBLIOGRÁFICAS / ARTÍCULOS CITADOS)
 # ==============================================================================
 
-async def get_referenced_works_endpoint(request: Request):
-    """
-    Obtiene las referencias bibliográficas únicas (Base Intelectual) para un paquete de indicadores
-    o una entidad específica dentro del paquete.
-    """
-    auth_orcid = _check_auth(request)
-    if not auth_orcid:
-        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
-
-    package_name = request.path_params.get('package_name', '').strip()
-    entity_type = request.query_params.get('entity_type', '').strip()
-    entity_name = request.query_params.get('entity_name', '').strip()
-    page = max(1, int(request.query_params.get('page', 1)))
-    limit = max(5, min(200, int(request.query_params.get('limit', 25))))
-    sort_by = request.query_params.get('sort_by', 'cited_by_count').strip()
-    sort_order = request.query_params.get('sort_order', 'desc').strip().lower()
-    search_q = request.query_params.get('q', '').strip()
-
-    pkg_dir = EXPORTS_DIR / package_name
-    if not pkg_dir.exists():
-        return JSONResponse({'error': f'Paquete {package_name} no encontrado.'}, status_code=404)
-
-    works_json_path = pkg_dir / f"{package_name}_openalex_works.json"
-    if not works_json_path.exists():
-        return JSONResponse({'error': f'Metadatos de obras no encontrados en {package_name}.'}, status_code=404)
-
-    try:
-        with open(works_json_path, 'r', encoding='utf-8') as f:
-            corpus_works = json.load(f)
-    except Exception as e:
-        logger.error(f"Error leyendo obras del corpus {package_name}: {e}")
-        return JSONResponse({'error': f'Error leyendo obras del corpus: {str(e)}'}, status_code=500)
-
-    # Filtrar obras del corpus que pertenecen a la entidad solicitada
-    matching_work_ids_set = set(_extract_entity_work_ids(corpus_works, entity_type, entity_name))
-    
-    # Extraer referenced_works de las obras coincidentes
-    all_ref_ids_ordered = []
-    seen_refs = set()
-    total_refs_count = 0
-    total_matching_works = 0
-
-    for w in corpus_works:
-        norm_wid = _normalize_openalex_id(w.get('id') or '')
-        if not matching_work_ids_set or norm_wid in matching_work_ids_set:
-            total_matching_works += 1
-            refs = w.get('referenced_works') or []
-            total_refs_count += len(refs)
-            for r in refs:
-                if r:
-                    norm_ref = _normalize_openalex_id(r)
-                    if norm_ref not in seen_refs:
-                        seen_refs.add(norm_ref)
-                        all_ref_ids_ordered.append(norm_ref)
-
-    unique_ref_count = len(all_ref_ids_ordered)
-
+def _fetch_referenced_details(client, all_ref_ids_ordered: list, total_matching_works: int, total_refs_count: int, page: int, limit: int, sort_by: str, sort_order: str, search_q: str, package_name: str, entity_type: str = '', entity_name: str = '') -> JSONResponse:
     if not all_ref_ids_ordered:
         return JSONResponse({
             'package_name': package_name,
@@ -672,7 +687,6 @@ async def get_referenced_works_endpoint(request: Request):
             'all_referenced_ids': []
         })
 
-    client = _get_ch_client()
     META_BATCH_SIZE = 2000
     ref_metadata = []
 
@@ -707,7 +721,6 @@ async def get_referenced_works_endpoint(request: Request):
                 'subfield_name': r[14] or ''
             })
 
-    # Filtrar por búsqueda textual si aplica
     if search_q:
         sq = search_q.lower()
         ref_metadata = [
@@ -719,14 +732,12 @@ async def get_referenced_works_endpoint(request: Request):
             or sq in w['doi'].lower()
         ]
 
-    # Ordenamiento
     reverse_sort = (sort_order == 'desc')
     if sort_by in ('cited_by_count', 'publication_year', 'fwci', 'percentile'):
         ref_metadata.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse_sort)
     elif sort_by in ('title', 'type', 'oa_status'):
         ref_metadata.sort(key=lambda x: str(x.get(sort_by) or '').lower(), reverse=reverse_sort)
 
-    # Paginación
     total_matching = len(ref_metadata)
     total_pages = (total_matching + limit - 1) // limit if limit > 0 else 1
     start_idx = (page - 1) * limit
@@ -739,7 +750,7 @@ async def get_referenced_works_endpoint(request: Request):
         'entity_name': entity_name,
         'total_referencing_works': total_matching_works,
         'total_references_count': total_refs_count,
-        'unique_referenced_works_count': unique_ref_count,
+        'unique_referenced_works_count': len(all_ref_ids_ordered),
         'filtered_count': total_matching,
         'page': page,
         'limit': limit,
@@ -747,6 +758,181 @@ async def get_referenced_works_endpoint(request: Request):
         'referenced_works': page_data,
         'all_referenced_ids': all_ref_ids_ordered
     })
+
+
+async def get_referenced_works_endpoint(request: Request):
+    """
+    Obtiene las referencias bibliográficas únicas (Base Intelectual) para un paquete de indicadores
+    o una entidad específica dentro del paquete.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    package_name = request.path_params.get('package_name', '').strip()
+    entity_type = request.query_params.get('entity_type', '').strip()
+    entity_name = request.query_params.get('entity_name', '').strip()
+    page = max(1, int(request.query_params.get('page', 1)))
+    limit = max(5, min(200, int(request.query_params.get('limit', 25))))
+    sort_by = request.query_params.get('sort_by', 'cited_by_count').strip()
+    sort_order = request.query_params.get('sort_order', 'desc').strip().lower()
+    search_q = request.query_params.get('q', '').strip()
+
+    pkg_dir = EXPORTS_DIR / package_name
+    if not pkg_dir.exists():
+        return JSONResponse({'error': f'Paquete {package_name} no encontrado.'}, status_code=404)
+
+    works_json_path = pkg_dir / f"{package_name}_openalex_works.json"
+    ids_path = pkg_dir / "corpus_work_ids.parquet"
+    all_ref_ids_ordered = []
+    total_matching_works = 0
+    total_refs_count = 0
+
+    client = _get_ch_client()
+
+    if works_json_path.exists():
+        try:
+            with open(works_json_path, 'r', encoding='utf-8') as f:
+                corpus_works = json.load(f)
+            matching_work_ids_set = set(_extract_entity_work_ids(corpus_works, entity_type, entity_name))
+            seen_refs = set()
+            for w in corpus_works:
+                norm_wid = _normalize_openalex_id(w.get('id') or '')
+                if not matching_work_ids_set or norm_wid in matching_work_ids_set:
+                    total_matching_works += 1
+                    refs = w.get('referenced_works') or []
+                    total_refs_count += len(refs)
+                    for r in refs:
+                        if r:
+                            norm_ref = _normalize_openalex_id(r)
+                            if norm_ref not in seen_refs:
+                                seen_refs.add(norm_ref)
+                                all_ref_ids_ordered.append(norm_ref)
+        except Exception as e:
+            logger.error(f"Error leyendo obras del corpus {package_name}: {e}")
+
+    elif ids_path.exists() and (entity_type in ('corpus', '', None)):
+        try:
+            import pandas as pd
+            df_ids = pd.read_parquet(ids_path)
+            work_ids = [_normalize_openalex_id(x) for x in df_ids['id'].dropna().tolist()]
+            total_matching_works = len(work_ids)
+            BATCH_SIZE = 2000
+            for i in range(0, len(work_ids), BATCH_SIZE):
+                batch = work_ids[i:i + BATCH_SIZE]
+                q_str = f"""
+                    SELECT DISTINCT arrayJoin(referenced_works)
+                    FROM rag.works_flat
+                    WHERE id IN {tuple(batch) if len(batch) > 1 else f"('{batch[0]}')"}
+                      AND length(referenced_works) > 0
+                """
+                rows = client.query(q_str).result_rows
+                all_ref_ids_ordered.extend([_normalize_openalex_id(r[0]) for r in rows if r[0]])
+            total_refs_count = len(all_ref_ids_ordered)
+            all_ref_ids_ordered = list(dict.fromkeys(all_ref_ids_ordered))
+        except Exception as e:
+            logger.error(f"Error leyendo referencias de ClickHouse para {package_name}: {e}")
+
+    if not works_json_path.exists() and not ids_path.exists():
+        return JSONResponse({'error': f'Metadatos de obras no encontrados en {package_name}.'}, status_code=404)
+
+    return _fetch_referenced_details(
+        client=client,
+        all_ref_ids_ordered=all_ref_ids_ordered,
+        total_matching_works=total_matching_works,
+        total_refs_count=total_refs_count,
+        page=page,
+        limit=limit,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        search_q=search_q,
+        package_name=package_name,
+        entity_type=entity_type,
+        entity_name=entity_name
+    )
+
+
+async def get_builder_referenced_works_endpoint(request: Request):
+    """
+    Obtiene la Base Intelectual (referencias bibliográficas) directamente para un corpus
+    en conformación en el Corpus Builder, sin requerir cálculo previo.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    source_mode = body.get('source_mode', 'filters')
+    filters = body.get('filters', {})
+    raw_ids = body.get('ids', [])
+    corpus_name = body.get('corpus_name', 'Corpus Asignado')
+    page = max(1, int(body.get('page', 1)))
+    limit = max(5, min(200, int(body.get('limit', 25))))
+    sort_by = body.get('sort_by', 'cited_by_count').strip()
+    sort_order = body.get('sort_order', 'desc').strip().lower()
+    search_q = body.get('q', '').strip()
+
+    client = _get_ch_client()
+
+    if source_mode in ('ids', 'upload') and raw_ids:
+        work_ids = [_normalize_openalex_id(w) for w in raw_ids if w]
+    else:
+        from openalex_indicators_engine.core.corpus_builder import CorpusBuilder
+        cb = CorpusBuilder()
+        clauses = cb._build_where_clauses(filters)
+        where_sql = " AND ".join(clauses) if clauses else "1=1"
+        res = client.query(f"SELECT id FROM rag.works_flat WHERE {where_sql} LIMIT 50000").result_rows
+        work_ids = [_normalize_openalex_id(r[0]) for r in res]
+
+    if not work_ids:
+        return JSONResponse({
+            'package_name': corpus_name,
+            'entity_type': 'corpus',
+            'entity_name': 'Corpus Asignado',
+            'total_referencing_works': 0,
+            'total_references_count': 0,
+            'unique_referenced_works_count': 0,
+            'filtered_count': 0,
+            'page': page,
+            'limit': limit,
+            'total_pages': 1,
+            'referenced_works': [],
+            'all_referenced_ids': []
+        })
+
+    BATCH_SIZE = 2000
+    all_ref_ids = []
+    for i in range(0, len(work_ids), BATCH_SIZE):
+        batch = work_ids[i:i + BATCH_SIZE]
+        q_str = f"""
+            SELECT DISTINCT arrayJoin(referenced_works)
+            FROM rag.works_flat
+            WHERE id IN {tuple(batch) if len(batch) > 1 else f"('{batch[0]}')"}
+              AND length(referenced_works) > 0
+        """
+        rows = client.query(q_str).result_rows
+        all_ref_ids.extend([_normalize_openalex_id(r[0]) for r in rows if r[0]])
+
+    all_ref_ids_ordered = list(dict.fromkeys(all_ref_ids))
+
+    return _fetch_referenced_details(
+        client=client,
+        all_ref_ids_ordered=all_ref_ids_ordered,
+        total_matching_works=len(work_ids),
+        total_refs_count=len(all_ref_ids),
+        page=page,
+        limit=limit,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        search_q=search_q,
+        package_name=corpus_name,
+        entity_type='corpus',
+        entity_name='Corpus Asignado'
+    )
 
 
 async def get_single_work_references_endpoint(request: Request):

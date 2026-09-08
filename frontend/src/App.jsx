@@ -70,6 +70,25 @@ const loadSessionState = (key, fallback) => {
   }
 }
 
+export const generateSuggestedCorpusName = (userData) => {
+  // Pequeña cadena aleatoria de 4 caracteres para evitar colisiones
+  const rand = Math.random().toString(36).substring(2, 6)
+  if (userData?.name) {
+    const clean = userData.name
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+    const parts = clean.split('_').filter(Boolean)
+    const shortName = parts.slice(0, 2).join('_')
+    return `Corpus_${shortName}_${rand}`
+  } else if (userData?.orcid) {
+    const cleanOrcid = userData.orcid.replace(/[^0-9X]/gi, '').slice(-4)
+    return `Corpus_User_${cleanOrcid}_${rand}`
+  }
+  return `Corpus_${rand}`
+}
+
 export default function App() {
   const { t, lang } = useI18n()
 
@@ -174,8 +193,22 @@ export default function App() {
   const [workCitationModalTab, setWorkCitationModalTab] = useState('citing')
   const [selectedWorkForCiting, setSelectedWorkForCiting] = useState({ id: '', title: '', citations: 0, references: 0 })
 
+  // Builder Corpus Citing & References Modal State
+  const [builderCitingModalOpen, setBuilderCitingModalOpen] = useState(false)
+  const [builderCitingModalTab, setBuilderCitingModalTab] = useState('citing')
+
   // Package & Calculation State
-  const [packageName, setPackageName] = useState(() => loadSessionState('packageName', 'Mi_Corpus_TlachIA'))
+  const [packageName, setPackageName] = useState(() => {
+    const saved = loadSessionState('packageName', null)
+    if (saved && saved !== 'Mi_Corpus_TlachIA') return saved
+    return generateSuggestedCorpusName(user)
+  })
+
+  useEffect(() => {
+    if (user && (!packageName || packageName === 'Mi_Corpus_TlachIA' || packageName.startsWith('Mi_Corpus_'))) {
+      setPackageName(generateSuggestedCorpusName(user))
+    }
+  }, [user])
   const [activeJob, setActiveJob] = useState(null)
   const [jobModalOpen, setJobModalOpen] = useState(false)
   const [timeWindowsConfig, setTimeWindowsConfig] = useState(() => loadSessionState('timeWindowsConfig', {
@@ -229,6 +262,7 @@ export default function App() {
   const [packages, setPackages] = useState([])
   const [loadingPackages, setLoadingPackages] = useState(false)
   const [selectedPackageDetails, setSelectedPackageDetails] = useState(null)
+  const [generatingZipPackages, setGeneratingZipPackages] = useState({})
 
   // Health Status
   const [apiOnline, setApiOnline] = useState(true)
@@ -315,6 +349,7 @@ export default function App() {
               }
               setUser(userData)
               localStorage.setItem('tlachia_user', JSON.stringify(userData))
+              setPackageName(prev => (!prev || prev === 'Mi_Corpus_TlachIA' || prev.startsWith('Corpus_') || prev.startsWith('Mi_Corpus_')) ? generateSuggestedCorpusName(userData) : prev)
               fetchPackages(userData.orcid)
             }
           })
@@ -398,7 +433,7 @@ export default function App() {
     setUploadResult(null)
     setHasSearched(false)
     setPreviewData({ total: 0, results: [], page: 1, total_pages: 1 })
-    setPackageName('Mi_Corpus_TlachIA')
+    setPackageName(generateSuggestedCorpusName(user))
     setLoadedCorpusMetadata(null)
     setIsScopusMode(false)
     setScopusQuery('')
@@ -966,6 +1001,33 @@ export default function App() {
     return { payload, signature: JSON.stringify(canonical) }
   }
 
+  // Open Citations / References for the Assembled Builder Corpus
+  const handleOpenBuilderCitations = (tab = 'citing') => {
+    if (!user) {
+      setLoginModalReason('citations')
+      setLoginModalOpen(true)
+      return
+    }
+    if (previewData.total === 0 || !hasAnyFilter) {
+      alert(t('builder.alert_no_corpus_citations', 'Debes definir al menos un filtro o identificador en el corpus antes de consultar sus citas o base intelectual.'))
+      return
+    }
+    setBuilderCitingModalTab(tab)
+    setBuilderCitingModalOpen(true)
+  }
+
+  const getBuilderPayload = () => {
+    const built = buildCorpusPayload()
+    if (!built) return null
+    const { payload } = built
+    return {
+      source_mode: payload.source_mode,
+      filters: payload.filters || {},
+      ids: payload.ids || [],
+      corpus_name: payload.package_name || packageName || 'Corpus_TlachIA'
+    }
+  }
+
   // Launch Metrics Computation Job
   const handleLaunchCalculation = async (force = false, skipMassiveWarning = false, extraConfig = null) => {
     // Verificar que el usuario esté autenticado para procesar
@@ -1096,6 +1158,69 @@ export default function App() {
       fetchPackages()
     } catch (err) {
       alert('Error al eliminar paquete: ' + (err.response?.data?.error || err.message))
+    }
+  }
+
+  // Polling para paquetes conformando dataset JSON en segundo plano
+  useEffect(() => {
+    const anyGenerating = packages.some((p) => p.json_generating)
+    if (!anyGenerating) return
+
+    const interval = setInterval(() => {
+      fetchPackages()
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [packages])
+
+  // Iniciar conformación de dataset JSON en segundo plano
+  const handleTriggerGenerateJson = async (packageName) => {
+    try {
+      // Actualización optimista de estado para retroalimentación inmediata en UI
+      setPackages((prev) =>
+        prev.map((p) =>
+          p.package_name === packageName ? { ...p, json_generating: true } : p
+        )
+      )
+      const orcidHeader = user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+      const res = await axios.post(
+        `/api/indicators/packages/${encodeURIComponent(packageName)}/generate-json`,
+        {},
+        { headers: orcidHeader }
+      )
+      if (res.data?.status === 'completed') {
+        fetchPackages()
+      }
+    } catch (err) {
+      console.error('Error initiating JSON generation:', err)
+      alert('Error iniciando generación de JSON: ' + (err.response?.data?.error || err.message))
+      fetchPackages()
+    }
+  }
+
+  // Generar archivo ZIP bajo demanda para un paquete
+  const handleGenerateZipForPackage = async (packageName) => {
+    setGeneratingZipPackages((prev) => ({ ...prev, [packageName]: true }))
+    try {
+      const orcidHeader = user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+      const res = await axios.post(
+        `/api/indicators/packages/${encodeURIComponent(packageName)}/generate-zip`,
+        {},
+        { headers: orcidHeader }
+      )
+      await fetchPackages()
+      if (res.data?.download_url) {
+        const a = document.createElement('a')
+        a.href = resolveDownloadUrl(res.data.download_url)
+        a.download = `${packageName}.zip`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      }
+    } catch (err) {
+      alert('Error generando archivo ZIP: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setGeneratingZipPackages((prev) => ({ ...prev, [packageName]: false }))
     }
   }
 
@@ -2184,15 +2309,94 @@ export default function App() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <input
-                    type="text"
-                    className="input-text"
-                    style={{ width: '220px', background: 'var(--bg-input)' }}
-                    placeholder={t('builder.package_name_placeholder')}
-                    disabled={!user}
-                    value={packageName}
-                    onChange={(e) => setPackageName(e.target.value)}
-                  />
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      className="input-text"
+                      style={{ width: '235px', background: 'var(--bg-input)', paddingRight: '28px' }}
+                      placeholder={t('builder.package_name_placeholder')}
+                      disabled={!user}
+                      value={packageName}
+                      onChange={(e) => setPackageName(e.target.value)}
+                      title="Nombre asignado al paquete de indicadores del corpus"
+                    />
+                    {user && (
+                      <button
+                        type="button"
+                        onClick={() => setPackageName(generateSuggestedCorpusName(user))}
+                        style={{
+                          position: 'absolute',
+                          right: '6px',
+                          background: 'transparent',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          padding: '3px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: '4px'
+                        }}
+                        title="Generar nuevo nombre con código aleatorio"
+                      >
+                        <RefreshCw size={13} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Botones de Citantes y Base Intelectual en el Corpus Builder */}
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{
+                      padding: '12px 16px',
+                      fontSize: '0.88rem',
+                      fontWeight: 700,
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.35)',
+                      color: 'var(--accent-primary)',
+                      cursor: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 'not-allowed' : 'pointer',
+                      opacity: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 0.5 : 1,
+                      transition: 'all 0.15s ease'
+                    }}
+                    disabled={previewData.total === 0 || previewLoading || !hasAnyFilter}
+                    title={t('builder.btn_citing_works_tooltip', 'Consultar y derivar artículos citantes de este corpus sin requerir cálculo previo')}
+                    onClick={() => handleOpenBuilderCitations('citing')}
+                  >
+                    <Sparkles size={15} />
+                    <span>{t('builder.btn_citing_works', 'Citantes')}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{
+                      padding: '12px 16px',
+                      fontSize: '0.88rem',
+                      fontWeight: 700,
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(129, 140, 248, 0.12)',
+                      border: '1px solid rgba(129, 140, 248, 0.35)',
+                      color: '#a78bfa',
+                      cursor: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 'not-allowed' : 'pointer',
+                      opacity: (previewData.total === 0 || previewLoading || !hasAnyFilter) ? 0.5 : 1,
+                      transition: 'all 0.15s ease'
+                    }}
+                    disabled={previewData.total === 0 || previewLoading || !hasAnyFilter}
+                    title={t('builder.btn_intellectual_base_tooltip', 'Consultar y derivar referencias bibliográficas citadas por este corpus sin requerir cálculo previo')}
+                    onClick={() => handleOpenBuilderCitations('references')}
+                  >
+                    <BookOpen size={15} />
+                    <span>{t('builder.btn_intellectual_base', 'Base Intelectual')}</span>
+                  </button>
+
                   <button
                     className="btn btn-primary"
                     style={{
@@ -2794,7 +2998,7 @@ export default function App() {
             )}
 
             {(() => {
-              const zipPackages = packages.filter(p => p.has_zip)
+              const displayPackages = packages
               if (loadingPackages) {
                 return (
                   <div style={{ textAlign: 'center', padding: '60px' }}>
@@ -2803,7 +3007,7 @@ export default function App() {
                   </div>
                 )
               }
-              if (zipPackages.length === 0) {
+              if (displayPackages.length === 0) {
                 return (
                   <div className="glass-panel" style={{ padding: '60px', textAlign: 'center' }}>
                     <FolderArchive size={48} color="var(--text-dim)" style={{ margin: '0 auto 16px' }} />
@@ -2827,7 +3031,7 @@ export default function App() {
               }
               return (
                 <div className="packages-grid">
-                  {zipPackages.map((pkg) => (
+                  {displayPackages.map((pkg) => (
                     <div key={pkg.package_name} className="glass-panel package-card">
                       <div>
                         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
@@ -2837,7 +3041,11 @@ export default function App() {
                               {pkg.package_name}
                             </h3>
                           </div>
-                          <span className="badge badge-green">{t('downloads.ready_badge')}</span>
+                          {pkg.has_zip ? (
+                            <span className="badge badge-green">{t('downloads.ready_badge')}</span>
+                          ) : (
+                            <span className="badge badge-amber" style={{ fontSize: '0.72rem' }}>Pendiente .ZIP</span>
+                          )}
                         </div>
 
                       <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
@@ -2858,19 +3066,86 @@ export default function App() {
                           </strong>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>{t('downloads.excel_files')}</span>
-                          <strong style={{ color: 'var(--text-muted)' }}>{t('downloads.excel_books_count')}</strong>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>{t('downloads.corpus_json')}</span>
-                          <strong style={{ color: pkg.has_json ? '#34d399' : 'var(--text-dim)' }}>
-                            {pkg.has_json ? t('modals.package_details.included') : t('modals.package_details.not_included')}
+                          <span>{pkg.csv_files_count ? t('downloads.csv_files', 'Archivos CSV:') : t('downloads.excel_files')}</span>
+                          <strong style={{ color: 'var(--text-muted)' }}>
+                            {pkg.csv_files_count 
+                              ? `${pkg.csv_files_count} ${t('downloads.csv_files_count', 'archivos (.csv)')}`
+                              : (pkg.excel_files_count ? `${pkg.excel_files_count} libros (.xlsx)` : t('downloads.excel_books_count'))
+                            }
                           </strong>
                         </div>
+
+                        {/* Checkbox interactivo para dataset JSON completo */}
+                        <div style={{
+                          marginTop: '6px',
+                          marginBottom: '4px',
+                          padding: '8px 10px',
+                          background: 'rgba(255, 255, 255, 0.03)',
+                          borderRadius: '6px',
+                          border: '1px solid rgba(255, 255, 255, 0.07)'
+                        }}>
+                          <label style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '8px',
+                            cursor: (pkg.has_json || pkg.json_generating) ? 'default' : 'pointer',
+                            fontSize: '0.78rem',
+                            userSelect: 'none'
+                          }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontWeight: 600 }}>
+                              <input
+                                type="checkbox"
+                                id={`json-checkbox-${pkg.package_name}`}
+                                checked={pkg.has_json || pkg.json_generating}
+                                disabled={pkg.has_json || pkg.json_generating}
+                                onChange={(e) => {
+                                  if (e.target.checked && !pkg.has_json && !pkg.json_generating) {
+                                    handleTriggerGenerateJson(pkg.package_name)
+                                  }
+                                }}
+                                style={{
+                                  cursor: (pkg.has_json || pkg.json_generating) ? 'default' : 'pointer',
+                                  accentColor: 'var(--accent-primary)',
+                                  width: '15px',
+                                  height: '15px'
+                                }}
+                              />
+                              {t('downloads.include_json_checkbox')}
+                            </span>
+                            {pkg.has_json ? (
+                              <span className="badge badge-green" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>✓ {t('downloads.json_included')}</span>
+                            ) : pkg.json_generating ? (
+                              <span className="badge badge-amber" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>⏳ {t('downloads.json_generating_badge')}</span>
+                            ) : (
+                              <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>{t('downloads.json_not_included')}</span>
+                            )}
+                          </label>
+
+                          {pkg.json_generating && (
+                            <div style={{
+                              marginTop: '8px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              background: 'rgba(245, 158, 11, 0.12)',
+                              border: '1px solid rgba(245, 158, 11, 0.35)',
+                              color: '#fbbf24',
+                              fontSize: '0.74rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              lineHeight: '1.3'
+                            }}>
+                              <Loader2 size={14} className="animate-spin" style={{ flexShrink: 0 }} />
+                              <span>{t('downloads.json_generating_alert')}</span>
+                            </div>
+                          )}
+                        </div>
+
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span>{t('downloads.package_size')}</span>
                           <strong style={{ color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)' }}>
-                            {pkg.zip_size_mb} MB
+                            {pkg.has_zip ? `${pkg.zip_size_mb} MB` : 'N/A'}
                           </strong>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -2883,15 +3158,36 @@ export default function App() {
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', flexWrap: 'wrap' }}>
-                      <a
-                        href={resolveDownloadUrl(pkg.download_url)}
-                        className="btn btn-success"
-                        style={{ flex: 1, textDecoration: 'none', minWidth: '120px' }}
-                        download
-                      >
-                        <Download size={16} />
-                        {t('downloads.download_zip')}
-                      </a>
+                      {pkg.has_zip ? (
+                        <a
+                          href={resolveDownloadUrl(pkg.download_url)}
+                          className="btn btn-success"
+                          style={{ flex: 1, textDecoration: 'none', minWidth: '120px' }}
+                          download
+                        >
+                          <Download size={16} />
+                          {t('downloads.download_zip')}
+                        </a>
+                      ) : (
+                        <button
+                          className="btn btn-primary"
+                          style={{ flex: 1, minWidth: '120px' }}
+                          disabled={generatingZipPackages[pkg.package_name]}
+                          onClick={() => handleGenerateZipForPackage(pkg.package_name)}
+                        >
+                          {generatingZipPackages[pkg.package_name] ? (
+                            <>
+                              <Loader2 size={16} className="animate-spin" />
+                              {t('downloads.card.generating')}
+                            </>
+                          ) : (
+                            <>
+                              <FolderArchive size={16} />
+                              {t('downloads.card.generate_btn')}
+                            </>
+                          )}
+                        </button>
+                      )}
                       <button
                         className="btn btn-secondary"
                         title={t('downloads.explore_tables_tooltip')}
@@ -3371,11 +3667,15 @@ export default function App() {
               </div>
 
               <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Libros Excel</span>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>
+                  {selectedPackageDetails.csv_files_count ? 'Archivos CSV' : 'Libros Excel'}
+                </span>
                 <strong style={{ fontSize: '1.1rem', color: '#34d399', fontFamily: 'var(--font-mono)' }}>
-                  45 Libros
+                  {selectedPackageDetails.csv_files_count 
+                    ? `${selectedPackageDetails.csv_files_count} Archivos` 
+                    : (selectedPackageDetails.excel_files_count ? `${selectedPackageDetails.excel_files_count} Libros` : '48 Tablas')}
                 </strong>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>15 ent. × 3 periodos</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>16 ent. × periodos</span>
               </div>
 
               <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
@@ -3468,6 +3768,7 @@ export default function App() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', maxHeight: '180px', overflowY: 'auto', fontSize: '0.75rem' }}>
+                <div style={{ gridColumn: '1 / -1', fontWeight: 700, color: 'var(--accent-primary)' }}>📦 0. Corpus (Línea Base General).xlsx</div>
                 <div>🌐 1. Locations.xlsx</div>
                 <div>🗺️ 2. Locations Subnational.xlsx</div>
                 <div>🏢 3. Organizations.xlsx</div>
@@ -3602,6 +3903,18 @@ export default function App() {
         initialTab={workCitationModalTab}
         workId={selectedWorkForCiting.id}
         workTitle={selectedWorkForCiting.title}
+        onSendToCorpus={handleReceiveCitingCorpus}
+        user={user}
+      />
+
+      {/* Modal de Artículos Citantes y Base Intelectual para el Corpus en Conformación */}
+      <CitingWorksModal
+        isOpen={builderCitingModalOpen}
+        onClose={() => setBuilderCitingModalOpen(false)}
+        initialTab={builderCitingModalTab}
+        packageName={packageName}
+        isBuilderMode={true}
+        builderPayload={getBuilderPayload()}
         onSendToCorpus={handleReceiveCitingCorpus}
         user={user}
       />

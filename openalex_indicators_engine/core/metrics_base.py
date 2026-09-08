@@ -56,7 +56,7 @@ def calculate_summary_indicators(df: pd.DataFrame, entity_name: Optional[str] = 
             'fwci_avg': 0.0, 'avg_percentile': 0.0, 'docs_top_10': 0, 'pct_top_10': 0.0,
             'docs_top_1': 0, 'pct_top_1': 0.0, 'h_index': 0, 'i10_index': 0,
             'pct_oa_total': 0.0, 'pct_oa_gold': 0.0, 'pct_oa_hybrid': 0.0, 'pct_oa_diamond': 0.0,
-            'pct_oa_green': 0.0, 'pct_oa_closed': 0.0, 'pct_doaj': 0.0, 'pct_cwts_core': 0.0,
+            'pct_oa_green': 0.0, 'pct_oa_bronze': 0.0, 'pct_oa_closed': 0.0, 'pct_doaj': 0.0, 'pct_cwts_core': 0.0,
             'pct_international': 0.0, 'pct_domestic': 0.0, 'pct_industry': 0.0, 'pct_global_south': 0.0,
             'estimated_apc_paid_usd': 0.0, 'avg_apc_per_doc_usd': 0.0, 'estimated_diamond_savings_usd': 0.0,
             'pct_retracted': 0.0, 'pct_paratext': 0.0
@@ -102,6 +102,7 @@ def calculate_summary_indicators(df: pd.DataFrame, entity_name: Optional[str] = 
     pct_oa_hybrid = float(((oa_stat == 'hybrid').sum() / n_docs) * 100.0)
     pct_oa_diamond = float(((oa_stat == 'diamond').sum() / n_docs) * 100.0)
     pct_oa_green = float(((oa_stat == 'green').sum() / n_docs) * 100.0)
+    pct_oa_bronze = float(((oa_stat == 'bronze').sum() / n_docs) * 100.0)
     pct_oa_closed = float(((oa_stat == 'closed').sum() / n_docs) * 100.0)
 
     pct_doaj = float(((df['is_doaj_indexed'].fillna(0).astype(int) == 1).sum() / n_docs) * 100.0) if 'is_doaj_indexed' in df.columns else 0.0
@@ -167,6 +168,7 @@ def calculate_summary_indicators(df: pd.DataFrame, entity_name: Optional[str] = 
         'pct_oa_hybrid': round(pct_oa_hybrid, 1),
         'pct_oa_diamond': round(pct_oa_diamond, 1),
         'pct_oa_green': round(pct_oa_green, 1),
+        'pct_oa_bronze': round(pct_oa_bronze, 1),
         'pct_oa_closed': round(pct_oa_closed, 1),
         'pct_doaj': round(pct_doaj, 1),
         'pct_cwts_core': round(pct_cwts_core, 1),

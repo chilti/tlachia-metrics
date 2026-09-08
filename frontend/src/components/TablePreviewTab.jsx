@@ -36,6 +36,7 @@ const resolveDownloadUrl = (url) => {
 }
 
 const TABLE_OPTIONS = [
+  { id: 'corpus', name: 'Corpus Completo (Baseline)', icon: '📦' },
   { id: 'organizations', name: 'Organizations (Instituciones)', icon: '🏢' },
   { id: 'locations', name: 'Locations (Países)', icon: '🌐' },
   { id: 'locations_subnational', name: 'Locations Subnational (Estados)', icon: '🗺️' },
@@ -539,40 +540,48 @@ export default function TablePreviewTab({
             </select>
           </div>
 
-          {/* Period Selector Pills */}
+          {/* Period Selector (Dropdown) */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
               {t('tables.temporality_label')}
             </label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', background: 'var(--bg-input)', borderRadius: '10px', padding: '4px', border: '1px solid var(--border-color)' }}>
+            <select
+              value={selectedPeriod}
+              onChange={(e) => {
+                setSelectedPeriod(e.target.value)
+                setPage(1)
+              }}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                borderRadius: '10px',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-main)',
+                fontSize: '0.9rem',
+                fontWeight: 600
+              }}
+            >
               {effectivePeriodOptions.map(per => {
-                const active = selectedPeriod === per.id
+                let label = per.label
+                if (per.id === 'full') label = t('tables.full_history')
+                else if (per.id === 'recent') label = t('tables.recent_period')
+                else if (per.id === 'trend') label = t('tables.annual_trend')
+                else if (per.id === 'performance_matrix') label = 'Matriz de Desempeño'
+
+                let icon = '📅'
+                if (per.id === 'full') icon = '📜'
+                else if (per.id === 'performance_matrix') icon = '📊'
+                else if (per.id === 'trend') icon = '📈'
+                else if (per.id === 'recent') icon = '⏱️'
+
                 return (
-                  <button
-                    key={per.id}
-                    onClick={() => {
-                      setSelectedPeriod(per.id)
-                      setPage(1)
-                    }}
-                    style={{
-                      flex: '1 1 auto',
-                      padding: '6px 10px',
-                      borderRadius: '7px',
-                      border: 'none',
-                      background: active ? 'var(--accent-primary)' : 'transparent',
-                      color: active ? '#0f172a' : 'var(--text-dim)',
-                      fontWeight: active ? 800 : 600,
-                      fontSize: '0.78rem',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
-                    {per.id === 'full' ? t('tables.full_history') : (per.id === 'recent' ? t('tables.recent_period') : (per.id === 'trend' ? t('tables.annual_trend') : per.label))}
-                  </button>
+                  <option key={per.id} value={per.id} style={{ background: 'var(--table-header-bg)', color: 'var(--text-main)' }}>
+                    {icon} {label}
+                  </option>
                 )
               })}
-            </div>
+            </select>
           </div>
 
           {/* Table Search & Export */}

@@ -197,6 +197,7 @@ class BaseAggregator:
             'pct_oa_hybrid': '% Gold - Hybrid Documents',
             'pct_oa_diamond': '% Free to Read / Diamond Documents',
             'pct_oa_green': '% Green Repository Documents',
+            'pct_oa_bronze': '% Bronze Documents',
             'pct_oa_closed': '% Non-Open Access Documents',
             'pct_doaj': '% DOAJ Indexed Documents',
             'pct_cwts_core': '% CWTS Core Documents',

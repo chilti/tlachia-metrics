@@ -20,26 +20,29 @@ generados a partir del corpus analizado, estructurados en las siguientes carpeta
 01_Matrices_Desempeño_Longitudinal/
   - Matrices comparativas de desempeño con tasas de cambio interperiódicas
     (Delta % Documentos, Delta FWCI, Citas por Documento, etc.).
-  - Libros Excel individuales por entidad (* Performance Matrix.xlsx) y el
-    libro consolidado multihistorial:
-    "Matriz_Desempeño_Longitudinal_Consolidada.xlsx" con pestañas por cada entidad.
+  - Reportes individuales por entidad y Corpus (* Performance Matrix.csv) y el
+    archivo consolidado multihistorial:
+    "Matriz_Desempeño_Longitudinal_Consolidada.csv" con columna identificadora 'Entity'.
 
 02_Periodos_Consecutivos/
   - Reportes de indicadores desagregados para cada una de las ventanas temporales
     consecutivas configuradas (ej. 2011-2015, 2016-2020, 2021-2025).
+  - Incluye el reporte multiventana consolidado:
+    "Corpus Periodos Consecutivos.csv" con tasas de cambio interperiódicas.
 
 03_Historico_Completo/
   - Indicadores calculados sobre la totalidad del periodo histórico del corpus
-    para cada entidad analítica (Instituciones, Autores, Fuentes, Países, etc.).
+    tanto a nivel global ("Corpus.csv") como para cada entidad analítica
+    (Instituciones, Autores, Fuentes, Países, etc.).
 
 04_Tendencias_Anuales/
   - Series temporales año con año con la evolución cronológica de la producción,
-    citas, FWCI y patrones de colaboración.
+    citas, FWCI y tasas de crecimiento anual (incluyendo "Corpus Trend.csv").
 
 05_Tablas_Parquet_y_Datos/
   - Formatos columnares Apache Parquet (.parquet) de alto rendimiento para
     analítica masiva en Python (pandas, polars), R o DuckDB.
-  - Archivo JSON consolidado con los registros normalizados de OpenAlex.
+  - Archivo JSON consolidado con los registros normalizados de OpenAlex (bajo demanda).
 
 manifest.json:
   - Manifiesto técnico en formato JSON con la estrategia de búsqueda,
@@ -63,13 +66,13 @@ def classify_archive_path(filename: str) -> str:
     if fn.endswith('.parquet') or fn.endswith('_openalex_works.json'):
         return f"05_Tablas_Parquet_y_Datos/{fn}"
 
-    # 3. Reportes en Excel (.xlsx)
-    if fn.endswith('.xlsx'):
+    # 3. Reportes en CSV (.csv) o Excel (.xlsx)
+    if fn.endswith('.csv') or fn.endswith('.xlsx'):
         if 'Performance Matrix' in fn or 'Matriz_Desempeño' in fn or 'Matriz_Desempeno' in fn:
             return f"01_Matrices_Desempeño_Longitudinal/{fn}"
         elif 'Trend' in fn:
             return f"04_Tendencias_Anuales/{fn}"
-        elif re.search(r'\b\d{4}[-_]\d{4}\b', fn):
+        elif re.search(r'\b\d{4}[-_]\d{4}\b', fn) or 'Periodos Consecutivos' in fn or 'Periodos_Consecutivos' in fn or 'Consecutive Periods' in fn:
             return f"02_Periodos_Consecutivos/{fn}"
         else:
             return f"03_Historico_Completo/{fn}"
@@ -79,7 +82,7 @@ def classify_archive_path(filename: str) -> str:
 
 def create_unified_indicators_zip(excel_files: List[Union[str, Path]], output_zip_path: Union[str, Path]) -> Path:
     """
-    Empaqueta la lista de archivos (Excel, Parquets, JSON, manifest) en un único
+    Empaqueta la lista de archivos (CSV, Excel, Parquets, JSON, manifest) en un único
     archivo .zip estructurado por carpetas temáticas.
     """
     out_p = Path(output_zip_path)

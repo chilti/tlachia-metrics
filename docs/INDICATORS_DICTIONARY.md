@@ -41,6 +41,7 @@ Este documento describe cada uno de los indicadores calculados en los 48 reporte
 * **`% Gold Documents`**: Publicaciones en revistas de cobro por procesamiento de artículo (APC).
 * **`% Gold - Hybrid Documents`**: Artículos abiertos dentro de revistas tradicionales por suscripción con APC pagado.
 * **`% Green Repository Documents`**: Artículos autoarchivados en repositorios institucionales, temáticos o regionales.
+* **`% Bronze Documents`**: Publicaciones de acceso libre temporal o permanente en el sitio web de la editorial sin una licencia abierta explícita (Creative Commons).
 * **`% Non-Open Access Documents`**: Artículos en acceso cerrado bajo muro de pago (*paywall*).
 * **`% DOAJ Indexed Documents`**: Publicaciones en revistas registradas y evaluadas en el Directory of Open Access Journals.
 * **`% CWTS Core Documents`**: Publicaciones dentro del núcleo de revistas de alta calidad metodológica de Leiden CWTS.
@@ -68,3 +69,22 @@ Este documento describe cada uno de los indicadores calculados en los 48 reporte
 
 * **`% Retracted Papers`**: Porcentaje de artículos retractados formalmente por mala praxis, error o fraude.
 * **`% Paratext Documents`**: Porcentaje de notas editoriales, prefacios y anuncios catalogados para filtrar ruido bibliométrico.
+
+---
+
+## 8. Reportes Específicos del Corpus (Línea Base General)
+
+El paquete unificado de TlachIA Metrics incorpora a la entidad **`Corpus`** como punto de referencia canónico global para contrastar el desempeño de las 16 entidades restantes:
+
+* **`03_Historico_Completo/Corpus.xlsx`**: Resumen macro de todos los 32 indicadores para la totalidad del corpus a lo largo de todo el horizonte temporal.
+* **`02_Periodos_Consecutivos/Corpus {p}.xlsx`**: Indicadores globales desagregados para cada ventana temporal quinquenal o personalizada.
+* **`02_Periodos_Consecutivos/Corpus Periodos Consecutivos.xlsx`**: Tabla cronológica consolidada en filas consecutivas que incluye indicadores de variación interperiódica:
+  * **`Δ% Documents (Interperiod)`**: Tasa de crecimiento del volumen de artículos respecto al periodo anterior:
+    $$\Delta\% \text{Docs} = \frac{\text{Docs}_t - \text{Docs}_{t-1}}{\text{Docs}_{t-1}} \times 100$$
+  * **`Δ% Times Cited (Interperiod)`**: Tasa de crecimiento de citas respecto al periodo anterior:
+    $$\Delta\% \text{Citas} = \frac{\text{Citas}_t - \text{Citas}_{t-1}}{\text{Citas}_{t-1}} \times 100$$
+  * **`Δ FWCI (Interperiod)`**: Variación absoluta del impacto normalizado ponderado:
+    $$\Delta \text{FWCI} = \text{FWCI}_t - \text{FWCI}_{t-1}$$
+* **`01_Matrices_Desempeño_Longitudinal/Corpus Performance Matrix.xlsx`**: Matriz en formato horizontal (*wide format*) que compara los indicadores clave del corpus a través de los periodos consecutivos.
+* **`04_Tendencias_Anuales/Corpus Trend.xlsx`**: Serie temporal año por año con tasas de crecimiento anual (`Δ% Documents (Annual)` y `Δ% Times Cited (Annual)`).
+

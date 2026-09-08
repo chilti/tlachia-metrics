@@ -31,6 +31,8 @@ export default function CitingWorksModal({
   workTitle = '',
   entityType = '',
   entityName = '',
+  isBuilderMode = false,
+  builderPayload = null,
   onSendToCorpus,
   user
 }) {
@@ -80,16 +82,46 @@ export default function CitingWorksModal({
   }, [isOpen, initialTab])
 
   useEffect(() => {
-    if (isOpen && (packageName || workId)) {
+    if (isOpen && (packageName || workId || isBuilderMode)) {
       fetchWorksData()
       setSaveSuccessMsg(null)
       setError(null)
     }
-  }, [isOpen, activeTab, packageName, workId, workTitle, entityType, entityName, page, pageSize, sortBy, sortOrder, searchQuery])
+  }, [isOpen, activeTab, packageName, workId, workTitle, entityType, entityName, isBuilderMode, page, pageSize, sortBy, sortOrder, searchQuery])
 
   const fetchWorksData = () => {
     setLoading(true)
     setError(null)
+
+    const headers = user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+
+    if (isBuilderMode) {
+      const endpoint = isCiting
+        ? '/api/citations/builder/citing-works'
+        : '/api/citations/builder/referenced-works'
+      const reqBody = {
+        source_mode: builderPayload?.source_mode || 'filters',
+        filters: builderPayload?.filters || {},
+        ids: builderPayload?.ids || [],
+        corpus_name: builderPayload?.corpus_name || packageName || 'Corpus en Construcción',
+        page: page,
+        limit: pageSize,
+        sort_by: sortBy,
+        sort_order: sortOrder,
+        q: searchQuery
+      }
+      axios.post(endpoint, reqBody, { headers })
+        .then(res => {
+          setModalData(res.data)
+          setLoading(false)
+        })
+        .catch(err => {
+          console.error(`Error fetching builder ${activeTab} works:`, err)
+          setError(err.response?.data?.error || `Error al consultar ${isCiting ? 'los artículos citantes' : 'las referencias bibliográficas'} del corpus en conformación.`)
+          setLoading(false)
+        })
+      return
+    }
 
     const params = {
       entity_type: entityType || '',
@@ -116,7 +148,7 @@ export default function CitingWorksModal({
 
     axios.get(endpoint, {
       params,
-      headers: user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+      headers
     })
       .then(res => {
         setModalData(res.data)
@@ -187,8 +219,8 @@ export default function CitingWorksModal({
     }
 
     const defaultName = isCiting
-      ? `Citantes de ${workTitle ? workTitle.slice(0, 30) : entityName ? `${entityName} (${packageName})` : packageName}`
-      : `Base Intelectual de ${workTitle ? workTitle.slice(0, 30) : entityName ? `${entityName} (${packageName})` : packageName}`
+      ? `Citantes de ${workTitle ? workTitle.slice(0, 30) : entityName ? `${entityName} (${packageName})` : packageName || 'Corpus'}`
+      : `Base Intelectual de ${workTitle ? workTitle.slice(0, 30) : entityName ? `${entityName} (${packageName})` : packageName || 'Corpus'}`
     
     if (onSendToCorpus) {
       onSendToCorpus(currentIdsList, defaultName)
@@ -202,30 +234,33 @@ export default function CitingWorksModal({
     setIsSavingCorpus(true)
     setError(null)
 
+    const effectivePkg = packageName || builderPayload?.corpus_name || 'Corpus'
     const deriveEndpoint = isCiting ? '/api/citations/derive-corpus' : '/api/citations/derive-referenced-corpus'
     const payload = isCiting ? {
-      package_name: packageName || '',
+      package_name: effectivePkg,
       work_id: workId || '',
       entity_type: entityType || (workId ? 'work' : ''),
-      entity_name: workTitle || entityName,
+      entity_name: workTitle || entityName || effectivePkg,
       citing_ids: currentIdsList,
-      corpus_name: workTitle ? `Citantes de: ${workTitle.slice(0, 40)}` : `Citantes de ${entityName ? `${entityName} (${packageName})` : packageName}`,
+      corpus_name: workTitle ? `Citantes de: ${workTitle.slice(0, 40)}` : `Citantes de ${entityName ? `${entityName} (${effectivePkg})` : effectivePkg}`,
       user_name: user?.name || user?.orcid || 'Investigador',
-      parent_corpus_id: packageName || workId || null,
+      parent_corpus_id: effectivePkg || workId || null,
       lineage_type: 'citing_impact'
     } : {
-      package_name: packageName || '',
+      package_name: effectivePkg,
       work_id: workId || '',
       entity_type: entityType || (workId ? 'work' : ''),
-      entity_name: workTitle || entityName,
+      entity_name: workTitle || entityName || effectivePkg,
       referenced_ids: currentIdsList,
-      corpus_name: workTitle ? `Base_Intelectual_${workTitle.slice(0, 40)}` : `Base_Intelectual_${entityName ? `${entityName}_${packageName}` : packageName}`,
+      corpus_name: workTitle ? `Base_Intelectual_${workTitle.slice(0, 40)}` : `Base_Intelectual_${entityName ? `${entityName}_${effectivePkg}` : effectivePkg}`,
       user_name: user?.name || user?.orcid || 'Investigador',
-      parent_corpus_id: packageName || workId || null,
+      parent_corpus_id: effectivePkg || workId || null,
       lineage_type: 'intellectual_base'
     }
 
-    axios.post(deriveEndpoint, payload)
+    axios.post(deriveEndpoint, payload, {
+      headers: user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+    })
       .then(res => {
         setIsSavingCorpus(false)
         setSaveSuccessMsg(`¡Nuevo corpus "${payload.corpus_name}" guardado en "Mis Corpus"!`)
@@ -306,7 +341,9 @@ export default function CitingWorksModal({
                 </span>
               </div>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', margin: '2px 0 0' }}>
-                {workId ? (
+                {isBuilderMode ? (
+                  <>{isCiting ? (t('modals.citing.impact_builder') || 'Impacto directo de las obras en conformación en: ') : (t('modals.citing.references_builder') || 'Base Intelectual citada por las obras en conformación en: ')}<strong style={{ color: 'var(--text-main)' }}>{packageName || 'Corpus en Construcción'}</strong></>
+                ) : workId ? (
                   <>{isCiting ? t('modals.citing.impact_direct_of') : t('modals.citing.references_cited_by')}<strong style={{ color: 'var(--text-main)' }}>{workTitle || workId}</strong></>
                 ) : entityName ? (
                   <>{isCiting ? t('modals.citing.impact_direct_of') : t('modals.citing.references_cited_by')}<strong style={{ color: 'var(--text-main)' }}>{entityName}</strong> ({entityType}) en <em>{packageName}</em></>

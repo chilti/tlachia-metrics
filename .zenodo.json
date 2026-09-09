@@ -1,0 +1,32 @@
+﻿{
+  "title": "TlachIA Metrics: Motor Unificado de Cálculo de Indicadores Cienciométricos para OpenAlex",
+  "description": "TlachIA Metrics es una plataforma de inteligencia cienciométrica y motor analítico diseñado para construir corpus personalizados sobre OpenAlex y calcular la batería completa de indicadores de producción, impacto (FWCI, percentiles), ciencia abierta diamante, economía de APC, redes de colaboración y taxonomías de conocimiento.",
+  "creators": [
+    {
+      "name": "Jiménez Andrade, José Luis",
+      "affiliation": "Facultad de Ciencias y Centro de Ciencias de la Complejidad (C3), Universidad Nacional Autónoma de México (UNAM)",
+      "orcid": "0000-0003-3453-7159"
+    },
+    {
+      "name": "Carrillo Calvet, Humberto Andrés",
+      "affiliation": "Facultad de Ciencias y Centro de Ciencias de la Complejidad (C3), Universidad Nacional Autónoma de México (UNAM)",
+      "orcid": "0000-0003-3659-6769"
+    }
+  ],
+  "keywords": [
+    "cienciometría",
+    "bibliometría",
+    "OpenAlex",
+    "indicadores cienciométricos",
+    "FWCI",
+    "acceso abierto",
+    "acceso abierto diamante",
+    "APC",
+    "ClickHouse",
+    "UNAM",
+    "C3"
+  ],
+  "license": "MIT",
+  "upload_type": "software",
+  "access_right": "open"
+}

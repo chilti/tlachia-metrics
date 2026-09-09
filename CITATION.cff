@@ -1,7 +1,7 @@
-﻿cff-version: 1.2.0
+cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "TlachIA Metrics: Motor Unificado de Cálculo de Indicadores Cienciométricos para OpenAlex"
-abstract: "Plataforma de inteligencia cienciométrica y motor analítico diseñado para construir corpus personalizados sobre OpenAlex y calcular la batería completa de indicadores de producción, impacto, ciencia abierta diamante, economía de APC y redes de colaboración."
+title: "TlachIA Metrics: Unified Scientometric Indicators Calculation Engine for OpenAlex"
+abstract: "Scientometric intelligence platform and analytical engine designed to construct customized OpenAlex corpuses and compute a comprehensive suite of indicators covering scientific production, citation impact (FWCI, citation percentiles), Diamond Open Access, APC economics, collaboration networks, and knowledge taxonomies."
 authors:
   - family-names: "Jiménez Andrade"
     given-names: "José Luis"
@@ -13,11 +13,12 @@ authors:
     affiliation: "Facultad de Ciencias y Centro de Ciencias de la Complejidad (C3), Universidad Nacional Autónoma de México (UNAM)"
 repository-code: "https://github.com/chilti/tlachia-metrics"
 keywords:
-  - cienciometría
-  - bibliometría
+  - TlachIA Metrics
+  - scientometrics
+  - bibliometrics
   - OpenAlex
-  - indicadores cienciométricos
-  - acceso abierto
+  - scientometric indicators
+  - open access
 license: MIT
 version: "1.0.0"
 date-released: "2026-09-09"

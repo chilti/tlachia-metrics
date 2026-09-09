@@ -3687,11 +3687,11 @@ export default function App() {
               </div>
 
               <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Corpus JSON</span>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Dataset Obras (CSV)</span>
                 <strong style={{ fontSize: '1.1rem', color: selectedPackageDetails.has_json ? '#10b981' : 'var(--text-dim)' }}>
                   {selectedPackageDetails.has_json ? 'Incluido' : 'No'}
                 </strong>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>registros crudos OpenAlex</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>obras completas OpenAlex</span>
               </div>
             </div>
 

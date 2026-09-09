@@ -18,7 +18,7 @@ from .gentle_query_engine import GentleQueryEngine
 logger = logging.getLogger(__name__)
 
 STANDARD_COLUMNS = [
-    'id', 'doi', 'title', 'publication_year', 'cited_by_count', 'fwci', 'percentile',
+    'id', 'doi', 'title', 'abstract', 'publication_year', 'cited_by_count', 'fwci', 'percentile',
     'is_top_10', 'is_top_1', 'is_oa', 'oa_status', 'source_id', 'source_name', 'source_type',
     'author_names', 'author_ids', 'institution_names', 'institution_ids', 'institution_rors',
     'institution_types', 'all_country_codes', 'country_code', 'subfield', 'field', 'domain', 'topic',

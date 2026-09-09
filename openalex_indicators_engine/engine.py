@@ -62,6 +62,7 @@ class TlachIAMetricsEngine:
                                    periods: Optional[List[Tuple[int, int]]] = None,
                                    export_parquet: bool = True,
                                    export_json: bool = False,
+                                   export_works_csv: bool = False,
                                    create_zip: bool = True,
                                    raw_json_source: Optional[Union[str, Path]] = None,
                                    progress_callback: Optional[Any] = None) -> Dict[str, Any]:
@@ -331,23 +332,18 @@ class TlachIAMetricsEngine:
             if temp_table:
                 self.pushdown_engine.release_corpus_context(temp_table)
 
-        # 4. Exportar el archivo JSON completo de registros
-        json_file_path = None
-        if export_json:
+        # 4. Exportar el archivo CSV consolidado de registros del corpus
+        works_csv_path = None
+        if export_works_csv or export_json:
             if progress_callback:
-                progress_callback(85, 'Exportando archivo JSON consolidado del corpus...')
-            json_file_path = out_d / f'{package_name}_openalex_works.json'
-            logger.info(f'Exportando archivo JSON completo del corpus a: {json_file_path}')
-            
-            if raw_json_source and Path(raw_json_source).exists() and str(raw_json_source).endswith('.json'):
-                with open(raw_json_source, 'rb') as src_f, open(json_file_path, 'wb') as dst_f:
-                    dst_f.write(src_f.read())
-            else:
-                records = df.to_dict(orient='records')
-                with open(json_file_path, 'w', encoding='utf-8') as jf:
-                    json.dump(records, jf, cls=JSONCustomEncoder, ensure_ascii=False, indent=2)
-
-            package_files_to_zip.append(json_file_path)
+                progress_callback(85, 'Exportando archivo CSV consolidado de obras del corpus...')
+            works_csv_path = out_d / f'{package_name}_openalex_works.csv'
+            logger.info(f'Exportando archivo CSV completo del corpus a: {works_csv_path}')
+            try:
+                df.to_csv(works_csv_path, index=False, encoding='utf-8')
+                package_files_to_zip.append(works_csv_path)
+            except Exception as e:
+                logger.warning(f"Error exportando obras a CSV: {e}")
 
         # 5. Empaquetado unificado en un solo archivo .zip (opcional / bajo demanda)
         zip_path = None

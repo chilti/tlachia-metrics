@@ -62,8 +62,8 @@ def classify_archive_path(filename: str) -> str:
     if fn == 'manifest.json' or fn.startswith('LEEME') or fn.startswith('README'):
         return fn
 
-    # 2. Archivos Parquet y JSON de datos
-    if fn.endswith('.parquet') or fn.endswith('_openalex_works.json'):
+    # 2. Archivos Parquet, JSON y CSV de datos de obras
+    if fn.endswith('.parquet') or fn.endswith('_openalex_works.json') or fn.endswith('_openalex_works.csv') or fn.endswith('_works.csv'):
         return f"05_Tablas_Parquet_y_Datos/{fn}"
 
     # 3. Reportes en CSV (.csv) o Excel (.xlsx)

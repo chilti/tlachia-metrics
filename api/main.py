@@ -979,6 +979,7 @@ async def list_exported_packages(request: Request):
             if item.is_dir():
                 zip_file = item / f"{item.name}.zip"
                 json_file = item / f"{item.name}_openalex_works.json"
+                works_csv_file = item / f"{item.name}_openalex_works.csv"
                 csv_dir = item / "csv_reports"
                 excel_dir = item / "excel_reports"
                 parquet_dir = item / "parquet_tables"
@@ -1011,7 +1012,13 @@ async def list_exported_packages(request: Request):
                             continue
 
                     total_works = manifest_data.get('total_works')
-                    if total_works is None and json_file.exists():
+                    if total_works is None and works_csv_file.exists():
+                        try:
+                            import pandas as pd
+                            total_works = len(pd.read_csv(works_csv_file, usecols=['id']))
+                        except Exception:
+                            pass
+                    elif total_works is None and json_file.exists():
                         try:
                             with open(json_file, 'r', encoding='utf-8') as jf:
                                 parsed = json.load(jf)
@@ -1023,6 +1030,7 @@ async def list_exported_packages(request: Request):
                     zip_size_mb = round(zip_size_bytes / (1024 * 1024), 2) if has_zip else 0
 
                     is_json_generating = JSON_JOBS_STORE.get(item.name, {}).get('status') == 'running'
+                    has_works_file = works_csv_file.exists() or json_file.exists()
 
                     packages.append({
                         'package_name': item.name,
@@ -1032,7 +1040,8 @@ async def list_exported_packages(request: Request):
                         'zip_size_bytes': zip_size_bytes,
                         'zip_size_mb': zip_size_mb,
                         'created_at': manifest_data.get('created_at') or datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                        'has_json': json_file.exists(),
+                        'has_json': has_works_file,
+                        'has_works_csv': works_csv_file.exists(),
                         'json_generating': is_json_generating,
                         'csv_files_count': csv_count,
                         'excel_files_count': excel_count,
@@ -1077,6 +1086,7 @@ async def generate_package_zip_endpoint(request: Request):
     csv_dir = pkg_dir / "csv_reports"
     excel_dir = pkg_dir / "excel_reports"
     parquet_dir = pkg_dir / "parquet_tables"
+    works_csv_file = pkg_dir / f"{package_name}_openalex_works.csv"
     json_file = pkg_dir / f"{package_name}_openalex_works.json"
     manifest_file = pkg_dir / "manifest.json"
 
@@ -1125,6 +1135,8 @@ async def generate_package_zip_endpoint(request: Request):
         files_to_zip.extend(list(excel_dir.glob('*.xlsx')))
     if parquet_dir.exists():
         files_to_zip.extend(list(parquet_dir.glob('*.parquet')))
+    if works_csv_file.exists():
+        files_to_zip.append(works_csv_file)
     if json_file.exists():
         files_to_zip.append(json_file)
     if manifest_file.exists():
@@ -1238,36 +1250,30 @@ def _generate_package_json_worker(package_name: str):
         if df is None or len(df) == 0:
             raise ValueError(f"No se pudieron recuperar las obras del corpus para {package_name}.")
 
-        json_file_path = pkg_dir / f"{package_name}_openalex_works.json"
-        logger.info(f"Escribiendo dataset JSON consolidado con {len(df)} registros en {json_file_path}...")
+        works_csv_path = pkg_dir / f"{package_name}_openalex_works.csv"
+        logger.info(f"Escribiendo dataset CSV consolidado con {len(df)} registros en {works_csv_path}...")
 
-        from openalex_indicators_engine.engine import JSONCustomEncoder
-        records = df.to_dict(orient='records')
-        with open(json_file_path, 'w', encoding='utf-8') as jf:
-            jf.write('[\n')
-            for i, rec in enumerate(records):
-                if i > 0:
-                    jf.write(',\n')
-                jf.write(json.dumps(rec, cls=JSONCustomEncoder, ensure_ascii=False))
-            jf.write('\n]\n')
+        # Exportar CSV ordenado por citas de manera compacta y ligera
+        df.to_csv(works_csv_path, index=False, encoding='utf-8')
+        logger.info(f"Dataset CSV de obras generado exitosamente ({works_csv_path.stat().st_size} bytes).")
 
-        logger.info(f"Dataset JSON generado exitosamente ({json_file_path.stat().st_size} bytes).")
-
-        # Si existe archivo .ZIP, anexar el archivo JSON directamente al zip
+        # Si existe archivo .ZIP, anexar el archivo CSV directamente al zip
         zip_file = pkg_dir / f"{package_name}.zip"
         if zip_file.exists():
             import zipfile
             from openalex_indicators_engine.exporters.zip_packager import classify_archive_path
-            arcname = classify_archive_path(json_file_path.name)
-            logger.info(f"Anexando archivo JSON al .ZIP existente: {zip_file} (arcname: {arcname})...")
+            arcname = classify_archive_path(works_csv_path.name)
+            logger.info(f"Anexando archivo CSV de obras al .ZIP existente: {zip_file} (arcname: {arcname})...")
             with zipfile.ZipFile(zip_file, 'a', compression=zipfile.ZIP_DEFLATED) as z:
-                z.write(json_file_path, arcname=arcname)
+                z.write(works_csv_path, arcname=arcname)
             manifest_data['zip_size_bytes'] = zip_file.stat().st_size
 
         # Actualizar manifest.json
-        manifest_data['has_json'] = True
-        manifest_data['json_generated_at'] = datetime.now().isoformat()
-        manifest_data['json_size_bytes'] = json_file_path.stat().st_size
+        manifest_data['has_works_csv'] = True
+        manifest_data['has_json'] = True  # Compatibilidad con clientes que consultan has_json
+        manifest_data['works_csv_generated_at'] = datetime.now().isoformat()
+        manifest_data['works_csv_size_bytes'] = works_csv_path.stat().st_size
+        manifest_data['json_size_bytes'] = works_csv_path.stat().st_size
         try:
             with open(manifest_file, 'w', encoding='utf-8') as mf:
                 json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
@@ -1277,12 +1283,12 @@ def _generate_package_json_worker(package_name: str):
         JSON_JOBS_STORE[package_name] = {
             'status': 'completed',
             'finished_at': datetime.now().isoformat(),
-            'size_bytes': json_file_path.stat().st_size
+            'size_bytes': works_csv_path.stat().st_size
         }
-        logger.info(f"Proceso de conformación JSON completado para {package_name}.")
+        logger.info(f"Proceso de conformación CSV de obras completado para {package_name}.")
 
     except Exception as e:
-        logger.error(f"Error en conformación de JSON para {package_name}: {e}", exc_info=True)
+        logger.error(f"Error en conformación de CSV de obras para {package_name}: {e}", exc_info=True)
         JSON_JOBS_STORE[package_name] = {
             'status': 'failed',
             'error': str(e),
@@ -1292,7 +1298,7 @@ def _generate_package_json_worker(package_name: str):
 
 async def generate_package_json_endpoint(request: Request):
     """
-    Inicia en segundo plano la conformación del dataset consolidado en formato JSON
+    Inicia en segundo plano la conformación del dataset consolidado en formato CSV
     para un paquete cienciométrico previamente calculado.
     """
     package_name = request.path_params.get('package_name', '').strip()
@@ -1308,12 +1314,14 @@ async def generate_package_json_endpoint(request: Request):
         return JSONResponse({
             'status': 'running',
             'package_name': package_name,
-            'message': 'La conformación del dataset JSON ya está en progreso en segundo plano.'
+            'message': 'La conformación del dataset CSV de obras ya está en progreso en segundo plano.'
         })
 
+    works_csv = pkg_dir / f"{package_name}_openalex_works.csv"
     json_file = pkg_dir / f"{package_name}_openalex_works.json"
-    if json_file.exists():
-        # Si ya existe el JSON y hay ZIP, verificar que esté dentro del ZIP
+    active_works_file = works_csv if works_csv.exists() else (json_file if json_file.exists() else None)
+
+    if active_works_file:
         zip_file = pkg_dir / f"{package_name}.zip"
         if zip_file.exists():
             import zipfile
@@ -1321,18 +1329,18 @@ async def generate_package_json_endpoint(request: Request):
             try:
                 with zipfile.ZipFile(zip_file, 'r') as zf:
                     names = zf.namelist()
-                arcname = classify_archive_path(json_file.name)
+                arcname = classify_archive_path(active_works_file.name)
                 if arcname not in names:
                     with zipfile.ZipFile(zip_file, 'a', compression=zipfile.ZIP_DEFLATED) as zf:
-                        zf.write(json_file, arcname=arcname)
+                        zf.write(active_works_file, arcname=arcname)
             except Exception as e:
-                logger.warning(f"No se pudo asegurar json en zip existente: {e}")
+                logger.warning(f"No se pudo asegurar obras en zip existente: {e}")
 
-        JSON_JOBS_STORE[package_name] = {'status': 'completed', 'size_bytes': json_file.stat().st_size}
+        JSON_JOBS_STORE[package_name] = {'status': 'completed', 'size_bytes': active_works_file.stat().st_size}
         return JSONResponse({
             'status': 'completed',
             'package_name': package_name,
-            'message': 'El dataset JSON ya existe y está disponible.'
+            'message': 'El dataset de obras ya existe y está disponible en formato CSV.'
         })
 
     JSON_JOBS_STORE[package_name] = {
@@ -1346,31 +1354,33 @@ async def generate_package_json_endpoint(request: Request):
     return JSONResponse({
         'status': 'started',
         'package_name': package_name,
-        'message': 'Conformación del dataset JSON iniciada en segundo plano.'
+        'message': 'Conformación del dataset CSV de obras iniciada en segundo plano.'
     })
 
 
 async def get_package_json_status_endpoint(request: Request):
     """
-    Consulta el estado de generación del archivo JSON para un paquete.
+    Consulta el estado de generación del archivo CSV/JSON de obras para un paquete.
     """
     package_name = request.path_params.get('package_name', '').strip()
     if not package_name:
         return JSONResponse({'error': 'Nombre de paquete requerido.'}, status_code=400)
 
     pkg_dir = EXPORTS_DIR / package_name
+    works_csv = pkg_dir / f"{package_name}_openalex_works.csv"
     json_file = pkg_dir / f"{package_name}_openalex_works.json"
-    has_json = json_file.exists()
+    has_works = works_csv.exists() or json_file.exists()
 
     job = JSON_JOBS_STORE.get(package_name, {})
     status = job.get('status')
     if not status:
-        status = 'completed' if has_json else 'idle'
+        status = 'completed' if has_works else 'idle'
 
     return JSONResponse({
         'package_name': package_name,
         'status': status,
-        'has_json': has_json,
+        'has_json': has_works,
+        'has_works_csv': works_csv.exists(),
         'error': job.get('error')
     })
 

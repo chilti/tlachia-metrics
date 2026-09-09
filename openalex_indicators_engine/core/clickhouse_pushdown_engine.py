@@ -27,15 +27,65 @@ GLOBAL_SOUTH_SQL_LIST = "', '".join([
     'IN', 'ID', 'PK', 'BD', 'PH', 'VN', 'TH', 'MY', 'IR', 'IQ', 'JO', 'LB', 'LK', 'NP', 'KZ', 'UZ'
 ])
 
+# Mapeo SQL columnar para Objetivos de Desarrollo Sostenible (ODS / SDG de la ONU)
+SDG_TRANSFORM_SQL = """transform(
+    splitByChar('/', sdg_item)[-1],
+    ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17'],
+    [
+        'SDG 01: No Poverty',
+        'SDG 02: Zero Hunger',
+        'SDG 03: Good Health and Well-being',
+        'SDG 04: Quality Education',
+        'SDG 05: Gender Equality',
+        'SDG 06: Clean Water and Sanitation',
+        'SDG 07: Affordable and Clean Energy',
+        'SDG 08: Decent Work and Economic Growth',
+        'SDG 09: Industry, Innovation and Infrastructure',
+        'SDG 10: Reduced Inequalities',
+        'SDG 11: Sustainable Cities and Communities',
+        'SDG 12: Responsible Consumption and Production',
+        'SDG 13: Climate Action',
+        'SDG 14: Life Below Water',
+        'SDG 15: Life on Land',
+        'SDG 16: Peace, Justice and Strong Institutions',
+        'SDG 17: Partnerships for the Goals'
+    ],
+    sdg_item
+)"""
+
 class ClickHousePushdownEngine:
     """
     Motor analítico de alto rendimiento que delega las operaciones de agregación
     multidimensional de corpus a ClickHouse mediante SQL columnar vectorizado.
     """
+    _sources_cache: Optional[Dict[str, str]] = None
+
     def __init__(self, query_engine: Optional[GentleQueryEngine] = None):
         self.query_engine = query_engine or GentleQueryEngine()
         self.client = self.query_engine.get_client()
         self.formatter = BaseAggregator(entity_column='id')
+
+    def _get_sources_map(self) -> Dict[str, str]:
+        """Carga en caché el diccionario (id -> display_name) de fuentes para enriquecer nombres sin JOINs."""
+        if ClickHousePushdownEngine._sources_cache is None:
+            try:
+                res = self.client.query("SELECT id, display_name FROM rag.sources WHERE display_name != ''")
+                ClickHousePushdownEngine._sources_cache = dict(res.result_rows)
+            except Exception as err:
+                logger.warning(f"No se pudo cargar mapeo de rag.sources: {err}")
+                ClickHousePushdownEngine._sources_cache = {}
+        return ClickHousePushdownEngine._sources_cache
+
+    def _enrich_entity_names(self, df: pd.DataFrame, entity_type: str) -> pd.DataFrame:
+        """Enriquece los identificadores de entidad con nombres descriptivos legibles."""
+        if df.empty or 'Name' not in df.columns:
+            return df
+        e = entity_type.lower().replace(" ", "_")
+        if e in ('publication_sources', 'sources', 'revistas'):
+            s_map = self._get_sources_map()
+            if s_map:
+                df['Name'] = df['Name'].map(s_map).fillna(df['Name'])
+        return df
 
     def setup_corpus_context(self, work_ids: List[str], temp_table_name: Optional[str] = None) -> str:
         """
@@ -48,13 +98,16 @@ class ClickHousePushdownEngine:
             temp_table_name = f"rag.tmp_active_corpus_{token}"
 
         clean_ids = []
+        seen = set()
         for wid in work_ids:
             if not wid:
                 continue
             raw = str(wid).strip()
             val = raw.split('/')[-1]
-            clean_ids.append([f"https://openalex.org/{val}"])
-            clean_ids.append([val])
+            full_id = f"https://openalex.org/{val}"
+            if full_id not in seen:
+                seen.add(full_id)
+                clean_ids.append([full_id])
 
         self.client.command(f"DROP TABLE IF EXISTS {temp_table_name}")
         self.client.command(f"CREATE TABLE {temp_table_name} (id String) ENGINE = Memory")
@@ -196,6 +249,7 @@ class ClickHousePushdownEngine:
         if df.empty:
             return pd.DataFrame()
 
+        df = self._enrich_entity_names(df, entity_type)
         df['Rank'] = range(1, len(df) + 1)
         df['h_index'] = 0
         df['i10_index'] = 0
@@ -224,6 +278,7 @@ class ClickHousePushdownEngine:
         if df.empty:
             return pd.DataFrame()
 
+        df = self._enrich_entity_names(df, entity_type)
         df['h_index'] = 0
         df['i10_index'] = 0
 
@@ -255,9 +310,9 @@ class ClickHousePushdownEngine:
         elif e in ('research_areas_subfield', 'subfield'):
             return "", "subfield_name", "AND subfield_name != ''"
         elif e in ('research_areas_topic', 'topic'):
-            return "", "topic_id", "AND topic_id != ''"
+            return "", "multiIf(topic != '', topic, topic_id)", "AND topic_id != ''"
         elif e in ('research_areas_sdg', 'sdg'):
-            return "ARRAY JOIN arrayDistinct(sdgs) AS sdg_item", "sdg_item", "AND sdg_item != ''"
+            return "ARRAY JOIN arrayDistinct(sdgs) AS sdg_item", SDG_TRANSFORM_SQL, "AND sdg_item != ''"
         elif e in ('concepts',):
             return "ARRAY JOIN arrayDistinct(concepts) AS cp", "cp", "AND cp != ''"
         elif e in ('keywords',):
@@ -398,6 +453,8 @@ class ClickHousePushdownEngine:
         SETTINGS max_threads = 4, max_memory_usage = 8000000000, max_bytes_before_external_group_by = 4000000000
         """
         df = self.client.query_df(sql)
+        if not df.empty:
+            df = self._enrich_entity_names(df, entity_type)
 
         result_dict = {}
         for s_yr, e_yr in periods:

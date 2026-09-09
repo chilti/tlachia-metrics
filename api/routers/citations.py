@@ -46,6 +46,26 @@ def _normalize_openalex_id(raw_id: str) -> str:
     return f"https://openalex.org/{suffix}"
 
 
+def _load_corpus_works(target_dir: Path, package_name: str) -> list:
+    """Carga las obras del corpus desde CSV (preferente) o JSON (legado)."""
+    csv_path = target_dir / f"{package_name}_openalex_works.csv"
+    json_path = target_dir / f"{package_name}_openalex_works.json"
+    if csv_path.exists():
+        try:
+            import pandas as pd
+            df = pd.read_csv(csv_path)
+            return df.to_dict(orient='records')
+        except Exception as e:
+            logger.warning(f"No se pudo leer CSV de obras {csv_path}: {e}")
+    if json_path.exists():
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"No se pudo leer JSON de obras {json_path}: {e}")
+    return []
+
+
 def _extract_entity_work_ids(works: list, entity_type: str = None, entity_name: str = None) -> list:
     """
     Filtra y normaliza los IDs de las obras del corpus que corresponden a una entidad específica.
@@ -354,17 +374,10 @@ async def get_citing_works_endpoint(request: Request):
     if not target_dir.exists():
         return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
 
-    # 1. Cargar obras del corpus desde JSON o parquet de IDs
-    json_path = target_dir / f"{package_name}_openalex_works.json"
+    # 1. Cargar obras del corpus desde CSV/JSON o parquet de IDs
+    corpus_works = _load_corpus_works(target_dir, package_name)
     ids_path = target_dir / "corpus_work_ids.parquet"
-    corpus_works = []
     cited_work_ids = []
-    if json_path.exists():
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                corpus_works = json.load(f)
-        except Exception as e:
-            logger.warning(f"No se pudo leer JSON del corpus {package_name}: {e}")
 
     if corpus_works:
         cited_work_ids = _extract_entity_work_ids(corpus_works, entity_type, entity_name)
@@ -482,12 +495,9 @@ async def derive_citing_corpus_endpoint(request: Request):
             citing_ids = list(dict.fromkeys([r[0] for r in rows]))
         elif package_name:
             target_dir = EXPORTS_DIR / package_name
-            json_path = target_dir / f"{package_name}_openalex_works.json"
-            if not json_path.exists():
-                return JSONResponse({'error': f"Paquete '{package_name}' no encontrado."}, status_code=404)
-
-            with open(json_path, 'r', encoding='utf-8') as f:
-                corpus_works = json.load(f)
+            corpus_works = _load_corpus_works(target_dir, package_name)
+            if not corpus_works and not (target_dir / "corpus_work_ids.parquet").exists():
+                return JSONResponse({'error': f"Paquete '{package_name}' no encontrado o sin datos de obras."}, status_code=404)
 
             cited_work_ids = _extract_entity_work_ids(corpus_works, entity_type, entity_name)
             if not cited_work_ids:
@@ -782,7 +792,7 @@ async def get_referenced_works_endpoint(request: Request):
     if not pkg_dir.exists():
         return JSONResponse({'error': f'Paquete {package_name} no encontrado.'}, status_code=404)
 
-    works_json_path = pkg_dir / f"{package_name}_openalex_works.json"
+    corpus_works = _load_corpus_works(pkg_dir, package_name)
     ids_path = pkg_dir / "corpus_work_ids.parquet"
     all_ref_ids_ordered = []
     total_matching_works = 0
@@ -790,10 +800,8 @@ async def get_referenced_works_endpoint(request: Request):
 
     client = _get_ch_client()
 
-    if works_json_path.exists():
+    if corpus_works:
         try:
-            with open(works_json_path, 'r', encoding='utf-8') as f:
-                corpus_works = json.load(f)
             matching_work_ids_set = set(_extract_entity_work_ids(corpus_works, entity_type, entity_name))
             seen_refs = set()
             for w in corpus_works:

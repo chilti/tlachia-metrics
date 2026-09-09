@@ -13,6 +13,13 @@
       "orcid": "0000-0003-3659-6769"
     }
   ],
+  "contributors": [
+    {
+      "name": "Calero Ramos, Romel",
+      "affiliation": "Centro de Ciencias de la Complejidad (C3), Universidad Nacional Autónoma de México (UNAM)",
+      "type": "Other"
+    }
+  ],
   "keywords": [
     "cienciometría",
     "bibliometría",

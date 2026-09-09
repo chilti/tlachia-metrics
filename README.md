@@ -47,3 +47,9 @@ resultado = engine.process_and_export_package(df, package_name="Analisis_2026")
 print(f"Total artículos: {resultado['total_works']}")
 print(f"Paquete .zip generado: {resultado['zip_path']}")
 ```
+
+---
+
+## 🙏 Agradecimientos
+
+Nuestro especial reconocimiento y agradecimiento a **Romel Calero Ramos**, por el diseño, despliegue y administración de la infraestructura de servidores y base de datos analítica masiva en **ClickHouse** en el **Centro de Ciencias de la Complejidad (C3, UNAM)**, pilar fundamental para el procesamiento y consulta a gran escala de los datos de este proyecto.

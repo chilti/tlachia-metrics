@@ -12,6 +12,8 @@ authors:
     orcid: "https://orcid.org/0000-0003-3659-6769"
     affiliation: "Facultad de Ciencias y Centro de Ciencias de la Complejidad (C3), Universidad Nacional Autónoma de México (UNAM)"
 repository-code: "https://github.com/chilti/tlachia-metrics"
+doi: "10.5281/zenodo.22693945"
+url: "https://doi.org/10.5281/zenodo.22693945"
 keywords:
   - TlachIA Metrics
   - scientometrics

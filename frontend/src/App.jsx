@@ -1061,13 +1061,23 @@ export default function App() {
       payload.time_windows = timeWindowsConfig
     }
 
+    if (extraConfig?.selected_entities) {
+      payload.selected_entities = extraConfig.selected_entities
+    }
+
+    if (extraConfig?.table_types) {
+      payload.table_types = extraConfig.table_types
+    }
+
     const signature = JSON.stringify({
       package_name: payload.package_name,
       source_mode: payload.source_mode,
       filters: payload.filters,
       ids: payload.ids,
       file_path: payload.file_path,
-      time_windows: payload.time_windows || null
+      time_windows: payload.time_windows || null,
+      selected_entities: payload.selected_entities || null,
+      table_types: payload.table_types || null
     })
 
     // Validar si ya hay un trabajo en ejecución

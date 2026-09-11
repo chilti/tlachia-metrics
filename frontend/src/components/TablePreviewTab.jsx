@@ -132,6 +132,25 @@ export default function TablePreviewTab({
     }
   }, [effectivePeriodOptions, selectedPeriod])
 
+  // Filter entity options to only those calculated in the selected package
+  const effectiveTableOptions = useMemo(() => {
+    const currentPkg = packages.find(p => getPkgName(p) === selectedPackage)
+    // If the package has selected_entities metadata, restrict to those
+    if (currentPkg?.selected_entities && currentPkg.selected_entities.length > 0) {
+      const allowed = new Set(currentPkg.selected_entities)
+      return TABLE_OPTIONS.filter(t => allowed.has(t.id))
+    }
+    // Fallback: show all options (legacy packages without metadata)
+    return TABLE_OPTIONS
+  }, [packages, selectedPackage])
+
+  // Auto-switch selectedTable if current selection wasn't calculated in this package
+  useEffect(() => {
+    if (effectiveTableOptions.length > 0 && !effectiveTableOptions.some(t => t.id === selectedTable)) {
+      setSelectedTable(effectiveTableOptions[0].id)
+    }
+  }, [effectiveTableOptions, selectedTable])
+
   // Sync initialPackage when passed from parent (e.g. clicking "Explorar Tablas" from a specific card)
   useEffect(() => {
     if (initialPackage) {
@@ -532,7 +551,7 @@ export default function TablePreviewTab({
                 fontWeight: 700
               }}
             >
-              {TABLE_OPTIONS.map(tab => (
+              {effectiveTableOptions.map(tab => (
                 <option key={tab.id} value={tab.id} style={{ background: 'var(--table-header-bg)' }}>
                   {tab.icon} {t('tables.entities.' + tab.id) || tab.name}
                 </option>

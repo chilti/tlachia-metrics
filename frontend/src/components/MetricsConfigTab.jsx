@@ -19,8 +19,79 @@ import {
   DollarSign,
   Tag,
   Lightbulb,
-  FileSpreadsheet
+  FileSpreadsheet,
+  CheckSquare,
+  Square,
+  RotateCcw,
+  Compass,
+  Microscope,
+  Award
 } from 'lucide-react'
+
+export const ENTITY_CATEGORIES = [
+  {
+    id: 'base',
+    title: 'Base Global del Corpus',
+    icon: '📦',
+    entities: [
+      { id: 'corpus', name: 'Corpus Completo (Baseline)', icon: '📦', desc: 'Métricas consolidadas de todo el corpus sin segmentar' }
+    ]
+  },
+  {
+    id: 'institutional',
+    title: 'Estructura Institucional y Geográfica',
+    icon: '🏢',
+    entities: [
+      { id: 'organizations', name: 'Organizaciones (Instituciones)', icon: '🏢', desc: 'Universidades, centros y dependencias' },
+      { id: 'organizations_colab', name: 'Colaboraciones Institucionales', icon: '🤝', desc: 'Redes y co-afiliaciones interinstitucionales' },
+      { id: 'sector_types', name: 'Tipos de Sector', icon: '🏭', desc: 'Educación, Salud, Gobierno, Empresa, etc.' },
+      { id: 'locations', name: 'Países (Locations)', icon: '🌐', desc: 'Distribución geopolítica internacional' },
+      { id: 'locations_subnational', name: 'Estados / Provincias', icon: '🗺️', desc: 'Desglose geográfico subnacional' }
+    ]
+  },
+  {
+    id: 'researchers',
+    title: 'Investigadores, Fuentes y Financiamiento',
+    icon: '👥',
+    entities: [
+      { id: 'researchers', name: 'Investigadores (Autores)', icon: '👥', desc: 'Producción, citas, H-index y FWCI por autor' },
+      { id: 'publication_sources', name: 'Fuentes de Publicación (Revistas)', icon: '📚', desc: 'Revistas, actas y series editoriales' },
+      { id: 'funding_agencies', name: 'Agencias de Financiamiento', icon: '🏛️', desc: 'Fondos y agencias patrocinadoras' }
+    ]
+  },
+  {
+    id: 'taxonomy',
+    title: 'Taxonomía OpenAlex, ODS y Temáticas',
+    icon: '🧭',
+    entities: [
+      { id: 'research_areas_domain', name: 'Dominios (Nivel 1)', icon: '🧭', desc: 'Grandes áreas del conocimiento' },
+      { id: 'research_areas_field', name: 'Campos (Nivel 2)', icon: '🔬', desc: 'Campos disciplinares principales' },
+      { id: 'research_areas_subfield', name: 'Subcampos (Nivel 3)', icon: '🏷️', desc: 'Especialidades disciplinares (ESI)' },
+      { id: 'research_areas_topic', name: 'Tópicos (Research Fronts - Nivel 4)', icon: '🔍', desc: 'Frentes de investigación especializados' },
+      { id: 'research_areas_sdg', name: 'Objetivos de Desarrollo Sostenible (ODS)', icon: '🎯', desc: 'Alineación con los 17 ODS de la ONU' },
+      { id: 'concepts', name: 'Conceptos', icon: '💡', desc: 'Conceptos jerárquicos normalizados' },
+      { id: 'keywords', name: 'Palabras Clave (Keywords)', icon: '🏷️', desc: 'Términos y descriptores textuales' }
+    ]
+  },
+  {
+    id: 'economics',
+    title: 'Economía de la Publicación',
+    icon: '💰',
+    entities: [
+      { id: 'economic_apc_breakdown', name: 'Desglose Económico APC', icon: '💰', desc: 'Gasto comercial en APC y ahorro Diamante' }
+    ]
+  }
+]
+
+export const ALL_ENTITY_IDS = ENTITY_CATEGORIES.flatMap(c => c.entities.map(e => e.id))
+
+export const DEFAULT_ENTITIES = [
+  'corpus',
+  'organizations',
+  'locations',
+  'research_areas_topic',
+  'publication_sources'
+]
 
 export default function MetricsConfigTab({
   previewData = { total: 0, results: [] },
@@ -70,9 +141,42 @@ export default function MetricsConfigTab({
     }
   }, [detectedYears.min, detectedYears.max])
   
+  const [generateFull, setGenerateFull] = useState(true)
   const [generateMatrix, setGenerateMatrix] = useState(true)
   const [generateIndividualPeriods, setGenerateIndividualPeriods] = useState(true)
   const [generateAnnualTrend, setGenerateAnnualTrend] = useState(true)
+  const [selectedEntities, setSelectedEntities] = useState(() => DEFAULT_ENTITIES)
+
+  const toggleEntity = (id) => {
+    setSelectedEntities(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    )
+  }
+
+  const selectPreset = (preset) => {
+    switch (preset) {
+      case 'default':
+        setSelectedEntities(DEFAULT_ENTITIES)
+        break
+      case 'all':
+        setSelectedEntities(ALL_ENTITY_IDS)
+        break
+      case 'basic':
+        setSelectedEntities(['corpus', 'organizations', 'researchers', 'publication_sources'])
+        break
+      case 'thematic':
+        setSelectedEntities(['corpus', 'research_areas_domain', 'research_areas_field', 'research_areas_subfield', 'research_areas_topic', 'research_areas_sdg', 'concepts', 'keywords'])
+        break
+      case 'institutional':
+        setSelectedEntities(['corpus', 'organizations', 'organizations_colab', 'sector_types', 'locations', 'locations_subnational'])
+        break
+      case 'none':
+        setSelectedEntities([])
+        break
+      default:
+        break
+    }
+  }
 
   const calculatedPeriods = useMemo(() => {
     const s = parseInt(startYear, 10)
@@ -122,12 +226,14 @@ export default function MetricsConfigTab({
         endYear,
         minDocs,
         periods: calculatedPeriods,
+        generateFull,
         generateMatrix,
         generateIndividualPeriods,
-        generateAnnualTrend
+        generateAnnualTrend,
+        selectedEntities
       })
     }
-  }, [windowSize, windowMode, anchorDirection, startYear, endYear, minDocs, calculatedPeriods, generateMatrix, generateIndividualPeriods, generateAnnualTrend, setTimeWindowsConfig])
+  }, [windowSize, windowMode, anchorDirection, startYear, endYear, minDocs, calculatedPeriods, generateFull, generateMatrix, generateIndividualPeriods, generateAnnualTrend, selectedEntities, setTimeWindowsConfig])
 
   const handleLaunch = () => {
     if (!user) {
@@ -137,6 +243,16 @@ export default function MetricsConfigTab({
 
     if (calculatedPeriods.length === 0) {
       alert(t('metrics.invalid_range_alert'))
+      return
+    }
+
+    if (selectedEntities.length === 0) {
+      alert('Debes seleccionar al menos una entidad para calcular métricas.')
+      return
+    }
+
+    if (!generateFull && !generateIndividualPeriods && !generateMatrix && !generateAnnualTrend) {
+      alert('Debes seleccionar al menos un tipo de tabla para calcular.')
       return
     }
 
@@ -151,6 +267,13 @@ export default function MetricsConfigTab({
           min_docs: minDocs,
           periods: calculatedPeriods,
           has_performance_matrix: generateMatrix
+        },
+        selected_entities: selectedEntities,
+        table_types: {
+          full: generateFull,
+          periods: generateIndividualPeriods,
+          performance_matrix: generateMatrix,
+          trend: generateAnnualTrend
         }
       })
     }
@@ -538,30 +661,30 @@ export default function MetricsConfigTab({
 
           </div>
 
-          {/* Indicators & Performance Matrix Output Configuration */}
+          {/* 1. Selector de Tipos de Tablas a Generar */}
           <div className="card-panel" style={{ padding: '24px' }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <TrendingUp size={20} color="#a78bfa" />
-              <span>{t('metrics.performance_matrix_section')}</span>
+              <span>{t('metrics.table_types_section') || 'Tipos de Tablas a Generar'}</span>
             </h3>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
               
-              {/* Options Checkboxes */}
+              {/* Checkboxes de Tipos de Tablas */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
-                    checked={generateMatrix}
-                    onChange={(e) => setGenerateMatrix(e.target.checked)}
+                    checked={generateFull}
+                    onChange={(e) => setGenerateFull(e.target.checked)}
                     style={{ marginTop: '3px' }}
                   />
                   <div>
                     <span style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-main)' }}>
-                      {t('metrics.gen_matrix_title')}
+                      {t('metrics.gen_full_title') || 'Histórico Completo (Full / Baseline)'}
                     </span>
                     <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', margin: '2px 0 0' }}>
-                      {t('metrics.gen_matrix_desc')}
+                      {t('metrics.gen_full_desc') || 'Agregación total acumulada del corpus completo para cada entidad seleccionada.'}
                     </p>
                   </div>
                 </label>
@@ -586,6 +709,23 @@ export default function MetricsConfigTab({
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
+                    checked={generateMatrix}
+                    onChange={(e) => setGenerateMatrix(e.target.checked)}
+                    style={{ marginTop: '3px' }}
+                  />
+                  <div>
+                    <span style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                      {t('metrics.gen_matrix_title')}
+                    </span>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', margin: '2px 0 0' }}>
+                      {t('metrics.gen_matrix_desc')}
+                    </p>
+                  </div>
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
                     checked={generateAnnualTrend}
                     onChange={(e) => setGenerateAnnualTrend(e.target.checked)}
                     style={{ marginTop: '3px' }}
@@ -601,7 +741,7 @@ export default function MetricsConfigTab({
                 </label>
               </div>
 
-              {/* Thresholds & Entities scope */}
+              {/* Thresholds & Pushdown Info */}
               <div>
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '6px' }}>
@@ -632,17 +772,224 @@ export default function MetricsConfigTab({
                   </div>
                 </div>
 
-                <div style={{ background: 'var(--bg-card-hover)', borderRadius: '10px', padding: '12px 16px', border: '1px solid var(--border-color)' }}>
-                  <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '4px' }}>
-                    {t('metrics.entities_battery_title')}
+                <div style={{ background: 'var(--bg-card-hover)', borderRadius: '10px', padding: '14px 18px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--accent-primary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>⚡</span>
+                    <span>Cálculo 100% Pushdown en ClickHouse</span>
                   </div>
-                  <p style={{ fontSize: '0.72rem', color: 'var(--text-dim)', margin: 0 }}>
-                    {t('metrics.entities_battery_desc')}
+                  <p style={{ fontSize: '0.74rem', color: 'var(--text-dim)', margin: 0, lineHeight: 1.4 }}>
+                    El cálculo se ejecuta en ClickHouse sin transferir registros completos. La descarga de obras individuales queda reservada para el Gestor de Descargas.
                   </p>
                 </div>
               </div>
 
             </div>
+          </div>
+
+          {/* 2. Selector Modular de Entidades Analizadas */}
+          <div className="card-panel" style={{ padding: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '18px' }}>
+              <div>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Layers size={20} color="var(--accent-primary)" />
+                  <span>{t('metrics.entity_selector_title') || 'Entidades a Incluir en el Cálculo'}</span>
+                </h3>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', margin: '4px 0 0' }}>
+                  {t('metrics.entity_selector_sub') || 'Selecciona qué dimensiones cienciométricas deseas calcular en esta corrida.'}
+                </p>
+              </div>
+
+              {/* Badge Contador de Entidades */}
+              <div style={{
+                background: selectedEntities.length > 0 ? 'rgba(56, 189, 248, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                border: `1px solid ${selectedEntities.length > 0 ? 'var(--accent-primary)' : '#ef4444'}`,
+                borderRadius: '20px',
+                padding: '4px 12px',
+                fontSize: '0.8rem',
+                fontWeight: 800,
+                color: selectedEntities.length > 0 ? 'var(--accent-primary)' : '#ef4444'
+              }}>
+                {selectedEntities.length} / {ALL_ENTITY_IDS.length} {t('metrics.entities_selected_badge') || 'entidades seleccionadas'}
+              </div>
+            </div>
+
+            {/* Barra de Presets Rápidos */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flexWrap: 'wrap',
+              background: 'var(--bg-input)',
+              padding: '10px 14px',
+              borderRadius: '10px',
+              border: '1px solid var(--border-color)',
+              marginBottom: '20px'
+            }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '4px' }}>
+                {t('metrics.presets_label') || 'Atajos:'}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => selectPreset('default')}
+                style={{
+                  background: 'rgba(56, 189, 248, 0.12)',
+                  border: '1px solid var(--accent-primary)',
+                  color: 'var(--accent-primary)',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '0.76rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                ⭐ {t('metrics.preset_default') || 'Por defecto (5)'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => selectPreset('all')}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-main)',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '0.76rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                💎 {t('metrics.preset_all') || 'Todas (17)'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => selectPreset('basic')}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-main)',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '0.76rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                ⚡ {t('metrics.preset_basic') || 'Básico (4)'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => selectPreset('thematic')}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-main)',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '0.76rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                🧭 {t('metrics.preset_thematic') || 'Temático (8)'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => selectPreset('institutional')}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-main)',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '0.76rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                🏛️ {t('metrics.preset_institutional') || 'Institucional (6)'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => selectPreset('none')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-dim)',
+                  fontSize: '0.76rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  marginLeft: 'auto',
+                  textDecoration: 'underline'
+                }}
+              >
+                {t('metrics.preset_clear') || 'Deseleccionar todas'}
+              </button>
+            </div>
+
+            {/* Bloques de Categorías de Entidades */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {ENTITY_CATEGORIES.map(category => (
+                <div key={category.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)', paddingBottom: '16px' }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>{category.icon}</span>
+                    <span>{category.title}</span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '10px' }}>
+                    {category.entities.map(ent => {
+                      const isSelected = selectedEntities.includes(ent.id)
+                      return (
+                        <div
+                          key={ent.id}
+                          onClick={() => toggleEntity(ent.id)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: '10px',
+                            padding: '10px 14px',
+                            borderRadius: '10px',
+                            background: isSelected ? 'rgba(56, 189, 248, 0.08)' : 'var(--bg-input)',
+                            border: `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            userSelect: 'none'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}} // Manejado por onClick del contenedor
+                            style={{ marginTop: '3px', cursor: 'pointer' }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: isSelected ? 'var(--text-main)' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span>{ent.icon}</span>
+                              <span>{ent.name}</span>
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', marginTop: '2px', lineHeight: 1.3 }}>
+                              {ent.desc}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {selectedEntities.length === 0 && (
+              <div style={{ marginTop: '16px', padding: '10px 14px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid #ef4444', color: '#f87171', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={18} />
+                <span>Debes seleccionar al menos una entidad para ejecutar el cálculo.</span>
+              </div>
+            )}
           </div>
 
           {/* Launch Action Footer */}
@@ -663,12 +1010,13 @@ export default function MetricsConfigTab({
                 {t('metrics.ready_to_launch_title')}
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: '2px' }}>
-                {t('metrics.ready_to_launch_will_compute')} <strong>{calculatedPeriods.length} {t('metrics.ready_to_launch_periods_consecutive')}</strong> + <strong>{t('metrics.performance_matrix_badge')}</strong> + {t('metrics.full_history_badge')} & {t('metrics.annual_trend_badge')} {t('metrics.ready_to_launch_over')} <strong>{previewData.total.toLocaleString()}</strong> {t('metrics.ready_to_launch_articles')}
+                {t('metrics.ready_to_launch_will_compute')} <strong>{selectedEntities.length} entidades</strong> sobre <strong>{calculatedPeriods.length} {t('metrics.ready_to_launch_periods_consecutive')}</strong> con ClickHouse Pushdown nativo.
               </div>
             </div>
 
             <button
               onClick={handleLaunch}
+              disabled={selectedEntities.length === 0 || (!generateFull && !generateIndividualPeriods && !generateMatrix && !generateAnnualTrend)}
               className="btn btn-primary"
               style={{
                 display: 'flex',
@@ -678,7 +1026,8 @@ export default function MetricsConfigTab({
                 fontSize: '1rem',
                 fontWeight: 800,
                 boxShadow: '0 0 20px rgba(56, 189, 248, 0.4)',
-                cursor: 'pointer'
+                cursor: selectedEntities.length > 0 ? 'pointer' : 'not-allowed',
+                opacity: selectedEntities.length > 0 ? 1 : 0.5
               }}
             >
               <Sparkles size={20} />

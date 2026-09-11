@@ -774,18 +774,23 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
 
         df = None
         raw_json_source = None
+        filters_sql = None
+        work_ids = None
+        limit = None
 
         if source_mode == 'filters':
             filters = payload.get('filters', {})
             limit_val = filters.get('limit')
             limit = int(limit_val) if limit_val and int(limit_val) > 0 else None
-            progress_callback(8, 'Consultando artículos en ClickHouse con filtros aplicados...')
-            df = engine.corpus_builder.from_filters(filters, limit=limit)
+            progress_callback(8, 'Configurando contexto de corpus directamente en ClickHouse (sin descarga de obras)...')
+            clauses = engine.corpus_builder._build_where_clauses(filters)
+            where_sql = " AND ".join(clauses) if clauses else "1=1"
+            filters_sql = where_sql
 
         elif source_mode == 'ids':
             ids_list = payload.get('ids', [])
-            progress_callback(8, f'Consultando {len(ids_list)} identificadores en ClickHouse...')
-            df = engine.load_corpus(ids_list)
+            progress_callback(8, f'Configurando {len(ids_list)} identificadores en ClickHouse...')
+            work_ids = ids_list
 
         elif source_mode == 'upload':
             file_path = payload.get('file_path')
@@ -795,38 +800,45 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             df = engine.load_corpus(file_path)
             raw_json_source = file_path
 
-        if df is None or len(df) == 0:
-            raise ValueError("No se encontraron artículos para el corpus especificado.")
-
-        with JOBS_LOCK:
-            job = JOBS_STORE.get(job_id)
-            if job:
-                job['total_works'] = len(df)
-                JOBS_STORE[job_id] = job
-
         # Procesar configuración de periodos consecutivos y ventanas temporales
         time_windows = payload.get('time_windows', {})
         raw_periods = time_windows.get('periods') or payload.get('periods')
         periods_list = None
         if raw_periods and isinstance(raw_periods, list):
-            periods_list = [(int(p[0]), int(p[1])) for p in raw_periods if len(p) >= 2]
+            periods_list = [(int(p[0]), int(p[1])) for p in raw_periods
+                            if p is not None and hasattr(p, '__len__') and len(p) >= 2]
 
-        # Ejecutar pipeline de agregadores, Excel + Parquets (sin generar JSON ni ZIP automáticamente)
+        selected_entities = payload.get('selected_entities')
+        table_types = payload.get('table_types')
+
+        # Ejecutar pipeline de agregadores 100% pushdown en ClickHouse
         result = engine.process_and_export_package(
             df=df,
+            filters_sql=filters_sql,
+            work_ids=work_ids,
+            limit=limit,
             package_name=package_name,
             periods=periods_list,
             export_parquet=True,
             export_json=False,
             create_zip=False,
             raw_json_source=raw_json_source,
+            selected_entities=selected_entities,
+            table_types=table_types,
             progress_callback=progress_callback
         )
 
-        # Persistir identificadores del corpus para conformación bajo demanda del dataset JSON
+        total_works = result.get('total_works', 0)
+        with JOBS_LOCK:
+            job = JOBS_STORE.get(job_id)
+            if job:
+                job['total_works'] = total_works
+                JOBS_STORE[job_id] = job
+
+        # Persistir identificadores si df está presente en memoria (ej. upload)
         try:
-            ids_parquet_file = EXPORTS_DIR / package_name / 'corpus_work_ids.parquet'
-            if 'id' in df.columns:
+            if df is not None and 'id' in df.columns:
+                ids_parquet_file = EXPORTS_DIR / package_name / 'corpus_work_ids.parquet'
                 df[['id']].to_parquet(ids_parquet_file, index=False)
         except Exception as e:
             logger.warning(f"No se pudo guardar corpus_work_ids.parquet: {e}")
@@ -837,11 +849,13 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
         
         manifest_data = {
             'package_name': package_name,
-            'total_works': len(df),
+            'total_works': total_works,
             'source_mode': source_mode,
             'filters': payload.get('filters', {}),
             'time_windows': time_windows,
             'periods': result.get('periods', []),
+            'selected_entities': result.get('selected_entities', []),
+            'table_types': result.get('table_types', {}),
             'has_performance_matrix': result.get('has_performance_matrix', True),
             'ids_count': len(payload.get('ids', [])) if source_mode == 'ids' else None,
             'uploaded_file': payload.get('file_path') if source_mode == 'upload' else None,
@@ -1052,6 +1066,8 @@ async def list_exported_packages(request: Request):
                         'tables_summary': manifest_data.get('tables_summary', {}),
                         'periods': manifest_data.get('periods', []),
                         'time_windows': manifest_data.get('time_windows', {}),
+                        'selected_entities': manifest_data.get('selected_entities', []),
+                        'table_types': manifest_data.get('table_types', {}),
                         'has_performance_matrix': manifest_data.get('has_performance_matrix', False),
                         'owner_orcid': pkg_owner_orcid,
                         'owner_name': pkg_owner_name,

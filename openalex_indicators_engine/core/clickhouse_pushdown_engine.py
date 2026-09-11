@@ -87,6 +87,38 @@ class ClickHousePushdownEngine:
                 df['Name'] = df['Name'].map(s_map).fillna(df['Name'])
         return df
 
+    def setup_corpus_from_filters(self, where_sql: str, limit: Optional[int] = None, temp_table_name: Optional[str] = None) -> Tuple[str, int]:
+        """
+        Para corpus grandes (modo filtros): retorna directamente la cláusula WHERE normalizada y el conteo total.
+        Ya NO crea tabla temporal — evita materializar el hash set de IDs que provoca Code 241 MEMORY_LIMIT_EXCEEDED.
+        El motor de agregación usará la cláusula WHERE directamente en cada query de ClickHouse.
+        Retorna (corpus_filter_string, total_works).
+        """
+        clean_where = where_sql.strip() if where_sql and where_sql.strip() else "1=1"
+        limit_sql = f" LIMIT {int(limit)}" if limit and int(limit) > 0 else ""
+
+        # Obtener conteo total sin descargar IDs
+        count_sql = f"SELECT count() FROM rag.works_flat WHERE {clean_where}{limit_sql}"
+        logger.info(f"Contando corpus con filtros directos (sin tabla temporal)...")
+        res = self.client.query(count_sql)
+        total = int(res.result_rows[0][0]) if res.result_rows else 0
+        logger.info(f"Corpus filtrado: {total} obras. Usando WHERE directo en agregaciones (sin subquery IN).")
+
+        # El corpus_filter es la cláusula WHERE directa — la pasamos a todos los agregadores
+        corpus_filter = f"({clean_where})"
+        if limit_sql:
+            # Con LIMIT no podemos simplemente poner el WHERE porque el limite aplica a registros
+            # Usamos una subquery de IDs solo cuando hay LIMIT (corpus acotado)
+            import uuid
+            token = uuid.uuid4().hex[:12]
+            temp_table_name = f"rag.tmp_active_corpus_{token}"
+            self.client.command(f"DROP TABLE IF EXISTS {temp_table_name}")
+            create_sql = f"CREATE TABLE {temp_table_name} (id String) ENGINE = Memory AS SELECT id FROM rag.works_flat WHERE {clean_where}{limit_sql}"
+            self.client.command(create_sql)
+            corpus_filter = f"id IN (SELECT id FROM {temp_table_name})"
+            logger.info(f"Corpus acotado (LIMIT): tabla temporal {temp_table_name} con {total} obras.")
+        return corpus_filter, total
+
     def setup_corpus_context(self, work_ids: List[str], temp_table_name: Optional[str] = None) -> str:
         """
         Crea una tabla en memoria (ENGINE = Memory) con los IDs del corpus.
@@ -115,14 +147,30 @@ class ClickHousePushdownEngine:
             self.client.insert(temp_table_name, clean_ids, column_names=['id'])
         return temp_table_name
 
-    def release_corpus_context(self, temp_table: str):
-        """Libera la tabla en memoria una vez completado el procesamiento."""
-        if not temp_table:
+    def release_corpus_context(self, corpus_filter: str):
+        """Libera la tabla temporal si el corpus_filter apunta a una (modo work_ids/upload)."""
+        if not corpus_filter:
             return
-        try:
-            self.client.command(f"DROP TABLE IF EXISTS {temp_table}")
-        except Exception as e:
-            logger.warning(f"Error liberando tabla de corpus {temp_table}: {e}")
+        # Solo hay tabla temporal que liberar si el filtro es un subquery IN con tabla tmp
+        if 'tmp_active_corpus_' in corpus_filter:
+            import re
+            tables = re.findall(r'rag\.tmp_active_corpus_[a-f0-9]+', corpus_filter)
+            for tbl in tables:
+                try:
+                    self.client.command(f"DROP TABLE IF EXISTS {tbl}")
+                    logger.info(f"Tabla temporal liberada: {tbl}")
+                except Exception as e:
+                    logger.warning(f"Error liberando tabla {tbl}: {e}")
+
+    def _corpus_where_clause(self, corpus_filter: str, extra: str = "") -> str:
+        """
+        Construye la cláusula WHERE completa a partir de corpus_filter:
+        - Si es un subquery IN (modo work_ids/upload): "id IN (SELECT ...)"
+        - Si es WHERE directo (modo filters): la cláusula tal como viene
+        Añade condiciones extra opcionales (filtros de año, entidad vacía, etc.)
+        """
+        extra_sql = f" AND {extra}" if extra else ""
+        return f"{corpus_filter}{extra_sql}"
 
     def _get_metrics_select_clause(self) -> str:
         """
@@ -159,11 +207,10 @@ class ClickHousePushdownEngine:
             round(countIf(is_paratext = 1) * 100.0 / count(), 2) AS pct_paratext
         """
 
-    def aggregate_corpus_baseline(self, temp_table: str, start_year: Optional[int] = None, end_year: Optional[int] = None) -> pd.DataFrame:
+    def aggregate_corpus_baseline(self, corpus_filter: str, start_year: Optional[int] = None, end_year: Optional[int] = None) -> pd.DataFrame:
         """Calcula los indicadores globales de la línea base del corpus."""
-        year_filter = ""
-        if start_year and end_year:
-            year_filter = f"AND publication_year BETWEEN {start_year} AND {end_year}"
+        year_filter = f"publication_year BETWEEN {start_year} AND {end_year}" if start_year and end_year else ""
+        where = self._corpus_where_clause(corpus_filter, year_filter)
 
         sql = f"""
         SELECT 
@@ -171,7 +218,7 @@ class ClickHousePushdownEngine:
             1 AS Rank,
             {self._get_metrics_select_clause()}
         FROM rag.works_flat
-        WHERE id IN (SELECT id FROM {temp_table}) {year_filter}
+        WHERE {where}
         SETTINGS max_threads = 4, max_memory_usage = 8000000000
         """
         df = self.client.query_df(sql)
@@ -179,21 +226,22 @@ class ClickHousePushdownEngine:
             return pd.DataFrame()
 
         # Calcular H-Index e i10-Index vectorialmente
-        h_idx, i10_idx = self._compute_h_and_i10_indexes(temp_table, year_filter=year_filter)
+        h_idx, i10_idx = self._compute_h_and_i10_indexes(corpus_filter, year_filter=year_filter)
         df['h_index'] = h_idx
         df['i10_index'] = i10_idx
 
         return self.formatter._format_output_columns(df, is_trend=False)
 
-    def aggregate_corpus_trend(self, temp_table: str) -> pd.DataFrame:
+    def aggregate_corpus_trend(self, corpus_filter: str) -> pd.DataFrame:
         """Calcula la serie temporal anual del corpus completo con tasas de crecimiento."""
+        where = self._corpus_where_clause(corpus_filter, "publication_year > 0")
         sql = f"""
         SELECT 
             'Corpus Completo' AS Name,
             publication_year AS `Publication Year`,
             {self._get_metrics_select_clause()}
         FROM rag.works_flat
-        WHERE id IN (SELECT id FROM {temp_table}) AND publication_year > 0
+        WHERE {where}
         GROUP BY publication_year
         ORDER BY publication_year ASC
         SETTINGS max_threads = 4, max_memory_usage = 8000000000
@@ -203,7 +251,7 @@ class ClickHousePushdownEngine:
             return pd.DataFrame()
 
         # Calcular H-Index por año
-        h_map = self._compute_h_index_by_group(temp_table, group_col="publication_year")
+        h_map = self._compute_h_index_by_group(corpus_filter, group_col="publication_year")
         df['h_index'] = df['Publication Year'].map(h_map).fillna(0).astype(int)
         df['i10_index'] = 0
 
@@ -220,17 +268,17 @@ class ClickHousePushdownEngine:
         ordered = [c for c in front if c in base_df.columns] + [c for c in base_df.columns if c not in front and c != 'Rank' and c != 'Name']
         return base_df[['Name'] + ordered]
 
-    def aggregate_entity_table(self, temp_table: str, entity_type: str, min_docs: int = 1,
+    def aggregate_entity_table(self, corpus_filter: str, entity_type: str, min_docs: int = 1,
                                start_year: Optional[int] = None, end_year: Optional[int] = None,
                                limit: int = 5000) -> pd.DataFrame:
         """
-        Calcula la tabla de indicadores para una entidad específica (Locations, Organizations, Sources, Topics, etc.)
-        directamente en ClickHouse.
+        Calcula la tabla de indicadores para una entidad específica directamente en ClickHouse.
+        Usa corpus_filter como cláusula WHERE directa (modo filters) o subquery IN (modo work_ids/upload).
         """
         array_expr, name_expr, where_extra = self._get_entity_sql_binding(entity_type)
-        year_filter = ""
-        if start_year and end_year:
-            year_filter = f"AND publication_year BETWEEN {start_year} AND {end_year}"
+        year_filter = f"publication_year BETWEEN {start_year} AND {end_year}" if start_year and end_year else ""
+        extra = " AND ".join(filter(None, [year_filter, where_extra.lstrip('AND ').strip()]))
+        where = self._corpus_where_clause(corpus_filter, extra)
 
         sql = f"""
         SELECT 
@@ -238,7 +286,7 @@ class ClickHousePushdownEngine:
             {self._get_metrics_select_clause()}
         FROM rag.works_flat
         {array_expr}
-        WHERE id IN (SELECT id FROM {temp_table}) {year_filter} {where_extra}
+        WHERE {where}
         GROUP BY Name
         HAVING num_documents >= {min_docs}
         ORDER BY num_documents DESC
@@ -256,11 +304,13 @@ class ClickHousePushdownEngine:
 
         return self.formatter._format_output_columns(df, is_trend=False)
 
-    def aggregate_entity_trend(self, temp_table: str, entity_type: str, limit: int = 5000) -> pd.DataFrame:
+    def aggregate_entity_trend(self, corpus_filter: str, entity_type: str, limit: int = 5000) -> pd.DataFrame:
         """
         Calcula la serie temporal anual (Trend) de una entidad directamente en ClickHouse.
         """
         array_expr, name_expr, where_extra = self._get_entity_sql_binding(entity_type)
+        extra = " AND ".join(filter(None, ["publication_year > 0", where_extra.lstrip('AND ').strip()]))
+        where = self._corpus_where_clause(corpus_filter, extra)
         sql = f"""
         SELECT 
             {name_expr} AS Name,
@@ -268,7 +318,7 @@ class ClickHousePushdownEngine:
             {self._get_metrics_select_clause()}
         FROM rag.works_flat
         {array_expr}
-        WHERE id IN (SELECT id FROM {temp_table}) AND publication_year > 0 {where_extra}
+        WHERE {where}
         GROUP BY Name, publication_year
         ORDER BY Name ASC, publication_year ASC
         LIMIT {limit}
@@ -321,14 +371,16 @@ class ClickHousePushdownEngine:
             return "", "oa_status", "AND oa_status != ''"
         return "", "id", ""
 
-    def _compute_h_and_i10_indexes(self, temp_table: str, year_filter: str = "") -> Tuple[int, int]:
+    def _compute_h_and_i10_indexes(self, corpus_filter: str, year_filter: str = "") -> Tuple[int, int]:
         """Calcula el H-index e i10-index sobre el conjunto activo en ClickHouse."""
+        extra = year_filter if year_filter else ""
+        where = self._corpus_where_clause(corpus_filter, extra)
         sql = f"""
         SELECT 
             arrayCount((c, i) -> c >= i, arrayReverseSort(groupArray(cited_by_count)), range(1, length(groupArray(cited_by_count)) + 1)) AS h_idx,
             countIf(cited_by_count >= 10) AS i10_idx
         FROM rag.works_flat
-        WHERE id IN (SELECT id FROM {temp_table}) {year_filter}
+        WHERE {where}
         SETTINGS max_threads = 4
         """
         try:
@@ -339,14 +391,15 @@ class ClickHousePushdownEngine:
             logger.warning(f"No se pudo calcular h_index en ClickHouse: {err}")
         return 0, 0
 
-    def _compute_h_index_by_group(self, temp_table: str, group_col: str = "publication_year") -> Dict[Any, int]:
+    def _compute_h_index_by_group(self, corpus_filter: str, group_col: str = "publication_year") -> Dict[Any, int]:
         """Calcula el H-index por grupo (ej. por año)."""
+        where = self._corpus_where_clause(corpus_filter, f"{group_col} > 0")
         sql = f"""
         SELECT 
             {group_col} AS grp,
             arrayCount((c, i) -> c >= i, arrayReverseSort(groupArray(cited_by_count)), range(1, length(groupArray(cited_by_count)) + 1)) AS h_idx
         FROM rag.works_flat
-        WHERE id IN (SELECT id FROM {temp_table}) AND {group_col} > 0
+        WHERE {where}
         GROUP BY grp
         SETTINGS max_threads = 4
         """
@@ -365,7 +418,7 @@ class ClickHousePushdownEngine:
             cases.append(f"publication_year BETWEEN {int(s_yr)} AND {int(e_yr)}, '{int(s_yr)}-{int(e_yr)}'")
         return f"multiIf({', '.join(cases)}, '')"
 
-    def aggregate_corpus_multi_period(self, temp_table: str, periods: List[Tuple[int, int]]) -> Dict[str, pd.DataFrame]:
+    def aggregate_corpus_multi_period(self, corpus_filter: str, periods: List[Tuple[int, int]]) -> Dict[str, pd.DataFrame]:
         """
         Calcula los indicadores macro de la línea base del corpus para múltiples periodos temporales
         en una sola consulta vectorizada (Single-Pass Multi-Period).
@@ -374,6 +427,7 @@ class ClickHousePushdownEngine:
             return {}
 
         multi_if_expr = self.build_multi_period_expression(periods)
+        where = self._corpus_where_clause(corpus_filter, "Period != ''")
         sql = f"""
         SELECT 
             'Corpus Completo' AS Name,
@@ -381,7 +435,7 @@ class ClickHousePushdownEngine:
             {multi_if_expr} AS Period,
             {self._get_metrics_select_clause()}
         FROM rag.works_flat
-        WHERE id IN (SELECT id FROM {temp_table}) AND Period != ''
+        WHERE {where}
         GROUP BY Period
         ORDER BY Period ASC
         SETTINGS max_threads = 4, max_memory_usage = 8000000000
@@ -389,13 +443,14 @@ class ClickHousePushdownEngine:
         df = self.client.query_df(sql)
 
         # Calcular H-Index e i10-Index agrupados por periodo en ClickHouse
+        h_where = self._corpus_where_clause(corpus_filter, "grp != ''")
         h_sql = f"""
         SELECT 
             {multi_if_expr} AS grp,
             arrayCount((c, i) -> c >= i, arrayReverseSort(groupArray(cited_by_count)), range(1, length(groupArray(cited_by_count)) + 1)) AS h_idx,
             countIf(cited_by_count >= 10) AS i10_idx
         FROM rag.works_flat
-        WHERE id IN (SELECT id FROM {temp_table}) AND grp != ''
+        WHERE {h_where}
         GROUP BY grp
         SETTINGS max_threads = 4
         """
@@ -426,7 +481,7 @@ class ClickHousePushdownEngine:
 
         return result_dict
 
-    def aggregate_entity_multi_period(self, temp_table: str, entity_type: str, periods: List[Tuple[int, int]],
+    def aggregate_entity_multi_period(self, corpus_filter: str, entity_type: str, periods: List[Tuple[int, int]],
                                       min_docs: int = 1, limit_per_period: int = 5000) -> Dict[str, pd.DataFrame]:
         """
         Calcula las tablas de indicadores para una entidad específica a través de múltiples periodos temporales
@@ -437,6 +492,8 @@ class ClickHousePushdownEngine:
 
         array_expr, name_expr, where_extra = self._get_entity_sql_binding(entity_type)
         multi_if_expr = self.build_multi_period_expression(periods)
+        extra = " AND ".join(filter(None, ["Period != ''", where_extra.lstrip('AND ').strip()]))
+        where = self._corpus_where_clause(corpus_filter, extra)
 
         sql = f"""
         SELECT 
@@ -445,7 +502,7 @@ class ClickHousePushdownEngine:
             {self._get_metrics_select_clause()}
         FROM rag.works_flat
         {array_expr}
-        WHERE id IN (SELECT id FROM {temp_table}) AND Period != '' {where_extra}
+        WHERE {where}
         GROUP BY Name, Period
         HAVING num_documents >= {min_docs}
         ORDER BY Period ASC, num_documents DESC

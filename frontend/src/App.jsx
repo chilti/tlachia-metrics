@@ -117,7 +117,16 @@ export default function App() {
   }
 
   const [activeTab, setActiveTab] = useState(() => loadSessionState('activeTab', 'builder')) // 'builder' | 'tables' | 'downloads'
-  const [searchMode, setSearchMode] = useState(() => loadSessionState('searchMode', 'filters')) // 'filters' | 'ids' | 'upload'
+  const [searchMode, setSearchMode] = useState(() => loadSessionState('searchMode', 'filters')) // 'filters' | 'wos' | 'ids' | 'upload'
+
+  // Web of Science (WoS) Query State
+  const [wosQuery, setWosQuery] = useState(() => loadSessionState('wosQuery', ''))
+  const [wosUseCte, setWosUseCte] = useState(() => loadSessionState('wosUseCte', true))
+  const [wosCompiled, setWosCompiled] = useState(null)
+  const [wosCompiling, setWosCompiling] = useState(false)
+  const [wosError, setWosError] = useState(null)
+  const [showCompiledSql, setShowCompiledSql] = useState(false)
+  const [sqlCopied, setSqlCopied] = useState(false)
 
   // Scopus Search API State
   const [scopusAvailable, setScopusAvailable] = useState(false)
@@ -231,6 +240,9 @@ export default function App() {
     if (isScopusMode) {
       return scopusQuery.trim().length > 0
     }
+    if (searchMode === 'wos') {
+      return wosQuery.trim().length > 0
+    }
     if (searchMode === 'ids') {
       return idsText.trim().length > 0
     }
@@ -252,7 +264,7 @@ export default function App() {
       oaStatus !== 'all'
     )
   }, [
-    isScopusMode, scopusQuery, searchMode, idsText, uploadedFile, uploadResult, query,
+    isScopusMode, scopusQuery, searchMode, wosQuery, idsText, uploadedFile, uploadResult, query,
     selectedDomains, selectedFields, selectedSubfields, selectedTopics,
     selectedSources, selectedInstitutions, selectedAuthors, selectedCountries,
     selectedTypes, allYears, oaStatus
@@ -302,6 +314,8 @@ export default function App() {
       sessionStorage.setItem('tlachia_scopusQuery', JSON.stringify(scopusQuery))
       sessionStorage.setItem('tlachia_scopusCoverageStats', JSON.stringify(scopusCoverageStats))
       sessionStorage.setItem('tlachia_timeWindowsConfig', JSON.stringify(timeWindowsConfig))
+      sessionStorage.setItem('tlachia_wosQuery', JSON.stringify(wosQuery))
+      sessionStorage.setItem('tlachia_wosUseCte', JSON.stringify(wosUseCte))
     } catch (e) {
       console.warn('Could not persist session state:', e)
     }
@@ -310,7 +324,8 @@ export default function App() {
     selectedTopics, topicLogic, selectedSources, selectedInstitutions, institutionLogic,
     selectedAuthors, authorLogic, selectedCountries, countryLogic, selectedTypes,
     startYear, endYear, allYears, oaStatus, idsText, hasSearched, previewData, packageName,
-    loadedCorpusMetadata, isScopusMode, scopusQuery, scopusCoverageStats, timeWindowsConfig
+    loadedCorpusMetadata, isScopusMode, scopusQuery, scopusCoverageStats, timeWindowsConfig,
+    wosQuery, wosUseCte
   ])
 
   // Check API Health & Scopus Availability
@@ -438,6 +453,10 @@ export default function App() {
     setIsScopusMode(false)
     setScopusQuery('')
     setScopusCoverageStats(null)
+    setWosQuery('')
+    setWosCompiled(null)
+    setWosError(null)
+    setShowCompiledSql(false)
 
     try {
       Object.keys(sessionStorage).forEach(k => {
@@ -448,6 +467,58 @@ export default function App() {
     } catch (e) {
       console.warn('Could not clear sessionStorage:', e)
     }
+  }
+
+  // Compile Web of Science (WoS) Query to ClickHouse SQL
+  const handleCompileWos = async (queryToCompile = null) => {
+    const q = (queryToCompile !== null ? queryToCompile : wosQuery).trim()
+    if (!q) {
+      setWosCompiled(null)
+      setWosError(null)
+      return
+    }
+    setWosCompiling(true)
+    setWosError(null)
+    try {
+      const res = await axios.post('/api/corpus/compile-wos', {
+        query: q,
+        use_cte: wosUseCte
+      })
+      if (res.data?.status === 'success') {
+        setWosCompiled(res.data.data)
+      } else {
+        setWosError(res.data?.error || 'Error compilando consulta WoS')
+      }
+    } catch (err) {
+      setWosError(err.response?.data?.error || err.message || 'Error de sintaxis WoS')
+    } finally {
+      setWosCompiling(false)
+    }
+  }
+
+  const handleWosFileUpload = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const content = event.target?.result || ''
+      setWosQuery(content)
+      handleCompileWos(content)
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  const handleInsertWosTag = (tag) => {
+    setWosQuery(prev => prev ? `${prev} ${tag}` : tag)
+  }
+
+  const handleCopySql = (sql) => {
+    if (!sql) return
+    navigator.clipboard.writeText(sql).then(() => {
+      setSqlCopied(true)
+      setTimeout(() => setSqlCopied(false), 2000)
+    })
   }
 
   // Execute Search in Scopus API and Cross-Reference with OpenAlex ClickHouse
@@ -644,32 +715,46 @@ export default function App() {
     setPreviewLoading(true)
     try {
       const offset = (page - 1) * pageSize
-      const payload = {
-        query,
-        domain_names: selectedDomains.map(d => d.domain_name || d.name),
-        domain_ids: selectedDomains.map(d => d.id),
-        field_names: selectedFields.map(f => f.field_name || f.name),
-        field_ids: selectedFields.map(f => f.id),
-        subfield_names: selectedSubfields.map(sf => sf.subfield_name || sf.name),
-        subfield_ids: selectedSubfields.map(sf => sf.id),
-        topic_ids: selectedTopics.map(t => t.id),
-        topic_logic: topicLogic,
-        source_ids: selectedSources.map(s => s.id),
-        institution_ids: selectedInstitutions.map(i => i.id),
-        institution_logic: institutionLogic,
-        author_ids: selectedAuthors.map(a => a.id),
-        author_logic: authorLogic,
-        country_codes: selectedCountries.map(c => c.code || c.id),
-        country_logic: countryLogic,
-        work_types: selectedTypes.map(t => t.id || t.type_id),
-        start_year: allYears ? 1900 : startYear,
-        end_year: allYears ? 2026 : endYear,
-        oa_status: oaStatus !== 'all' ? oaStatus : undefined,
-        limit: pageSize,
-        offset
+      let payload
+      if (searchMode === 'wos') {
+        payload = {
+          source_mode: 'wos',
+          wos_query: wosQuery.trim(),
+          use_cte: wosUseCte,
+          limit: pageSize,
+          offset
+        }
+      } else {
+        payload = {
+          query,
+          domain_names: selectedDomains.map(d => d.domain_name || d.name),
+          domain_ids: selectedDomains.map(d => d.id),
+          field_names: selectedFields.map(f => f.field_name || f.name),
+          field_ids: selectedFields.map(f => f.id),
+          subfield_names: selectedSubfields.map(sf => sf.subfield_name || sf.name),
+          subfield_ids: selectedSubfields.map(sf => sf.id),
+          topic_ids: selectedTopics.map(t => t.id),
+          topic_logic: topicLogic,
+          source_ids: selectedSources.map(s => s.id),
+          institution_ids: selectedInstitutions.map(i => i.id),
+          institution_logic: institutionLogic,
+          author_ids: selectedAuthors.map(a => a.id),
+          author_logic: authorLogic,
+          country_codes: selectedCountries.map(c => c.code || c.id),
+          country_logic: countryLogic,
+          work_types: selectedTypes.map(t => t.id || t.type_id),
+          start_year: allYears ? 1900 : startYear,
+          end_year: allYears ? 2026 : endYear,
+          oa_status: oaStatus !== 'all' ? oaStatus : undefined,
+          limit: pageSize,
+          offset
+        }
       }
       const res = await axios.post('/api/corpus/preview', payload)
       setPreviewData(res.data)
+      if (res.data?.wos_metadata) {
+        setWosCompiled(prev => ({ ...(prev || {}), ...res.data.wos_metadata }))
+      }
       setCurrentPage(page)
     } catch (err) {
       console.error('Error fetching preview:', err)
@@ -698,6 +783,8 @@ export default function App() {
         format,
         corpus_name: packageName || 'Corpus_OpenAlex',
         source_mode: searchMode,
+        wos_query: searchMode === 'wos' ? wosQuery.trim() : undefined,
+        use_cte: wosUseCte,
         query,
         domain_names: selectedDomains.map(d => d.domain_name || d.name),
         domain_ids: selectedDomains.map(d => d.id),
@@ -960,6 +1047,9 @@ export default function App() {
         end_year: allYears ? 2026 : endYear,
         oa_status: oaStatus !== 'all' ? oaStatus : undefined
       }
+    } else if (searchMode === 'wos') {
+      payload.wos_query = wosQuery.trim()
+      payload.use_cte = wosUseCte
     } else if (searchMode === 'ids') {
       const lines = idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
       payload.ids = lines
@@ -995,6 +1085,8 @@ export default function App() {
         oa_status: payload.filters.oa_status || 'all'
       } : null,
       ids: payload.ids ? [...payload.ids].sort() : null,
+      wos_query: payload.wos_query || null,
+      use_cte: payload.use_cte ?? null,
       file_path: payload.file_path || null
     }
 
@@ -1024,6 +1116,8 @@ export default function App() {
       source_mode: payload.source_mode,
       filters: payload.filters || {},
       ids: payload.ids || [],
+      wos_query: payload.wos_query || '',
+      use_cte: payload.use_cte ?? true,
       corpus_name: payload.package_name || packageName || 'Corpus_TlachIA'
     }
   }
@@ -1495,7 +1589,7 @@ export default function App() {
               {/* Search Mode Selector */}
               <div className="filter-group">
                 <label className="filter-label">{t('builder.mode_selector_label')}</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px', background: 'var(--bg-input)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '4px', background: 'var(--bg-input)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                   <button
                     onClick={() => setSearchMode('filters')}
                     style={{
@@ -1510,6 +1604,21 @@ export default function App() {
                     }}
                   >
                     {t('builder.mode_filters')}
+                  </button>
+                  <button
+                    onClick={() => setSearchMode('wos')}
+                    style={{
+                      padding: '6px 4px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      borderRadius: '6px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: searchMode === 'wos' ? 'var(--accent-primary)' : 'transparent',
+                      color: searchMode === 'wos' ? '#000' : 'var(--text-muted)'
+                    }}
+                  >
+                    {t('builder.mode_wos')}
                   </button>
                   <button
                     onClick={() => setSearchMode('ids')}
@@ -1956,6 +2065,278 @@ export default function App() {
                     {user ? t('builder.search_openalex_btn') : t('builder.connect_orcid_to_search')}
                   </button>
                 </>
+              )}
+
+              {searchMode === 'wos' && (
+                <div className="filter-group" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="filter-label" style={{ marginBottom: 0 }}>{t('builder.wos_sidebar_label')}</label>
+                    <label
+                      htmlFor="wos-file-input"
+                      className="btn-outline"
+                      style={{ padding: '3px 8px', fontSize: '0.72rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      title={t('builder.wos_load_file')}
+                    >
+                      <UploadCloud size={12} />
+                      {t('builder.wos_load_file')}
+                      <input
+                        id="wos-file-input"
+                        type="file"
+                        accept=".txt,.wos,.query"
+                        style={{ display: 'none' }}
+                        onChange={handleWosFileUpload}
+                      />
+                    </label>
+                  </div>
+
+                  <p style={{ fontSize: '0.73rem', color: 'var(--text-muted)', lineHeight: 1.4, margin: 0 }}>
+                    {t('builder.wos_sidebar_desc')}
+                  </p>
+
+                  {/* Quick Syntax Badges */}
+                  <div>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', display: 'block', marginBottom: '4px' }}>
+                      {t('builder.wos_quick_tags')}
+                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {['TS=', 'TI=', 'AB=', 'WC=', 'CU=(Mexico)', 'PY=(2020-2024)', 'AND', 'OR', 'NOT', 'NEAR/5'].map(tag => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => handleInsertWosTag(tag)}
+                          style={{
+                            padding: '2px 6px',
+                            fontSize: '0.68rem',
+                            fontFamily: 'var(--font-mono)',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-subtle)',
+                            background: 'rgba(255, 255, 255, 0.04)',
+                            color: 'var(--accent-primary)',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Textarea Editor */}
+                  <textarea
+                    className="input-text"
+                    style={{
+                      minHeight: '220px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.8rem',
+                      lineHeight: 1.4,
+                      resize: 'vertical',
+                      cursor: user ? 'text' : 'not-allowed',
+                      background: 'rgba(10, 15, 29, 0.7)',
+                      borderColor: wosError ? '#ef4444' : (wosCompiled ? '#10b981' : 'var(--border-subtle)')
+                    }}
+                    placeholder={user ? t('builder.wos_sidebar_placeholder') : t('builder.ids_sidebar_locked')}
+                    value={wosQuery}
+                    disabled={!user}
+                    onClick={() => {
+                      if (!user) {
+                        setLoginModalReason('filters')
+                        setLoginModalOpen(true)
+                      }
+                    }}
+                    onChange={(e) => {
+                      setWosQuery(e.target.value)
+                      if (wosCompiled) setWosCompiled(null)
+                      if (wosError) setWosError(null)
+                    }}
+                  />
+
+                  {/* CTE Optimization Toggle */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', background: 'rgba(0, 200, 150, 0.05)', border: '1px solid rgba(0, 200, 150, 0.2)', borderRadius: '6px' }}>
+                    <input
+                      type="checkbox"
+                      id="wos-cte-toggle"
+                      checked={wosUseCte}
+                      onChange={(e) => setWosUseCte(e.target.checked)}
+                      style={{ cursor: 'pointer', accentColor: 'var(--accent-primary)' }}
+                    />
+                    <label htmlFor="wos-cte-toggle" style={{ fontSize: '0.72rem', cursor: 'pointer', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '4px' }} title={t('builder.wos_cte_tooltip')}>
+                      <span>⚡</span>
+                      <strong>{t('builder.wos_cte_label')}</strong>
+                    </label>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      style={{
+                        padding: '8px',
+                        fontSize: '0.75rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        opacity: (!wosQuery.trim() || wosCompiling) ? 0.5 : 1,
+                        cursor: (!wosQuery.trim() || wosCompiling) ? 'not-allowed' : 'pointer'
+                      }}
+                      onClick={() => handleCompileWos()}
+                      disabled={!wosQuery.trim() || wosCompiling}
+                    >
+                      {wosCompiling ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                      {wosCompiling ? t('builder.wos_compiling') : t('builder.wos_compile_btn')}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{
+                        padding: '8px',
+                        fontSize: '0.75rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        opacity: (!wosQuery.trim() || previewLoading) ? 0.5 : 1,
+                        cursor: (!wosQuery.trim() || previewLoading) ? 'not-allowed' : 'pointer'
+                      }}
+                      onClick={() => {
+                        if (!user) {
+                          setLoginModalReason('general')
+                          setLoginModalOpen(true)
+                          return
+                        }
+                        setHasSearched(true)
+                        fetchPreview(1)
+                      }}
+                      disabled={!wosQuery.trim() || previewLoading}
+                    >
+                      {previewLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+                      {t('builder.wos_search_btn')}
+                    </button>
+                  </div>
+
+                  {/* Error Box */}
+                  {wosError && (
+                    <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#f87171' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, marginBottom: '2px' }}>
+                        <AlertCircle size={14} />
+                        Error de Sintaxis WoS
+                      </div>
+                      <div style={{ wordBreak: 'break-word', fontFamily: 'var(--font-mono)', fontSize: '0.7rem' }}>
+                        {wosError}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Metadata / Analysis Box */}
+                  {wosCompiled && (
+                    <div style={{ padding: '10px 12px', background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '6px', fontSize: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ fontWeight: 600, color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <CheckCircle2 size={14} />
+                          Compilación Exitosa
+                        </span>
+                        {wosCompiled.uses_cte && (
+                          <span style={{ fontSize: '0.65rem', background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>
+                            CTE ON
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Stats Badges */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                        <span style={{ padding: '2px 6px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '4px', fontSize: '0.7rem' }}>
+                          Nodos: <strong>{wosCompiled.node_count}</strong>
+                        </span>
+                        <span style={{ padding: '2px 6px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '4px', fontSize: '0.7rem' }}>
+                          Términos: <strong>{wosCompiled.term_count}</strong>
+                        </span>
+                        {wosCompiled.countries_detected?.length > 0 && (
+                          <span style={{ padding: '2px 6px', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', borderRadius: '4px', fontSize: '0.7rem' }}>
+                            Países: <strong>{wosCompiled.countries_detected.join(', ')}</strong>
+                          </span>
+                        )}
+                        {wosCompiled.near_count > 0 && (
+                          <span style={{ padding: '2px 6px', background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', borderRadius: '4px', fontSize: '0.7rem' }}>
+                            NEAR: <strong>{wosCompiled.near_count}</strong>
+                          </span>
+                        )}
+                        {wosCompiled.wildcard_count > 0 && (
+                          <span style={{ padding: '2px 6px', background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', borderRadius: '4px', fontSize: '0.7rem' }}>
+                            Comodines: <strong>{wosCompiled.wildcard_count}</strong>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Warnings */}
+                      {wosCompiled.warnings?.length > 0 && (
+                        <div style={{ marginBottom: '8px', padding: '6px 8px', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '4px', color: '#fbbf24', fontSize: '0.68rem' }}>
+                          {wosCompiled.warnings.map((w, idx) => (
+                            <div key={idx} style={{ display: 'flex', gap: '4px', alignItems: 'flex-start' }}>
+                              <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: '2px' }} />
+                              <span>{w}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Toggle Compiled SQL Preview */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowCompiledSql(prev => !prev)}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--accent-primary)',
+                            fontSize: '0.72rem',
+                            cursor: 'pointer',
+                            padding: 0,
+                            textDecoration: 'underline'
+                          }}
+                        >
+                          {showCompiledSql ? t('builder.wos_hide_sql') : t('builder.wos_show_sql')}
+                        </button>
+                        {showCompiledSql && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopySql(wosCompiled.sql_full || wosCompiled.sql_where)}
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.06)',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: '4px',
+                              padding: '2px 6px',
+                              fontSize: '0.68rem',
+                              color: sqlCopied ? '#34d399' : 'var(--text-muted)',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {sqlCopied ? t('builder.wos_sql_copied') : t('builder.wos_copy_sql')}
+                          </button>
+                        )}
+                      </div>
+
+                      {showCompiledSql && (
+                        <pre style={{
+                          marginTop: '8px',
+                          padding: '8px',
+                          background: 'rgba(0, 0, 0, 0.5)',
+                          borderRadius: '4px',
+                          fontSize: '0.65rem',
+                          fontFamily: 'var(--font-mono)',
+                          color: '#e2e8f0',
+                          maxHeight: '180px',
+                          overflowY: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word'
+                        }}>
+                          {wosCompiled.sql_full || wosCompiled.sql_where}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
 
               {searchMode === 'ids' && (

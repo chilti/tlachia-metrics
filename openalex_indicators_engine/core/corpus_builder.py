@@ -5,6 +5,7 @@ Constructor y normalizador universal de corpus bibliográficos:
 - Desanida y extrae entidades desde JSON de OpenAlex, CSV (88 columnas) o Parquet
 - Extracción por IDs de OpenAlex, DOIs, Revistas, Instituciones, Autores, Tópicos o Países desde ClickHouse
 """
+import re
 import os
 import json
 import logging
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
 from .gentle_query_engine import GentleQueryEngine
+from .wos_parser import compile_wos_query, CompilationResult
 
 logger = logging.getLogger(__name__)
 
@@ -266,11 +268,23 @@ class CorpusBuilder:
 
     def _build_where_clauses(self, filters: Dict[str, Any]) -> List[str]:
         clauses = []
-        
-        # Rango de años
-        start_year = int(filters.get('start_year') or 1970)
-        end_year = int(filters.get('end_year') or 2026)
-        clauses.append(f"publication_year BETWEEN {start_year} AND {end_year}")
+
+        # Consulta Web of Science (WoS) compilada a SQL ClickHouse
+        wos_q = filters.get('wos_query')
+        wos_compiled = None
+        if wos_q and str(wos_q).strip():
+            wos_compiled = compile_wos_query(str(wos_q).strip(), use_cte=False)
+            if wos_compiled.sql_where:
+                clauses.append(f"({wos_compiled.sql_where})")
+
+        # Rango de años (se aplica si se especifica explícitamente o si WoS no incluye PY=)
+        has_explicit_years = 'start_year' in filters or 'end_year' in filters
+        wos_has_py = wos_compiled and ('PY' in wos_compiled.fields_detected)
+        if has_explicit_years or not wos_has_py:
+            if not wos_compiled or has_explicit_years:
+                start_year = int(filters.get('start_year') or 1970)
+                end_year = int(filters.get('end_year') or 2026)
+                clauses.append(f"publication_year BETWEEN {start_year} AND {end_year}")
 
         # Búsqueda libre en título o abstract
         query = filters.get('query') or filters.get('search_query') or filters.get('q')
@@ -443,7 +457,130 @@ class CorpusBuilder:
 
         return clauses
 
+    def _has_other_entity_filters(self, filters: Dict[str, Any]) -> bool:
+        """Determina si hay otros filtros de entidad además de la consulta WoS."""
+        keys = ['topic_ids', 'topics', 'source_ids', 'institution_ids', 'author_ids',
+                'country_codes', 'domain_ids', 'field_ids', 'subfield_ids', 'work_types']
+        return any(bool(filters.get(k)) for k in keys)
+
+    def from_wos_query(self, wos_query: str, limit: Optional[int] = None, use_cte: bool = True) -> pd.DataFrame:
+        """
+        Construye un corpus a partir de una consulta Web of Science compilada a ClickHouse SQL.
+        Utiliza compilación optimizada en capas CTE para máxima eficiencia sobre 569M filas.
+        """
+        if not wos_query or not str(wos_query).strip():
+            return pd.DataFrame(columns=STANDARD_COLUMNS)
+
+        compiled = compile_wos_query(str(wos_query).strip(), table='works_flat', use_cte=use_cte)
+        limit_sql = f" LIMIT {int(limit)}" if limit and int(limit) > 0 else ""
+
+        if compiled.uses_cte:
+            cte_prefix = re.split(r'SELECT\s+\*\s+FROM\s+prefiltrado', compiled.sql_full, flags=re.IGNORECASE)[0]
+            sql = f"{cte_prefix}SELECT * FROM prefiltrado WHERE {compiled.sql_where} ORDER BY cited_by_count DESC{limit_sql}"
+        else:
+            sql = f"SELECT * FROM works_flat WHERE {compiled.sql_where} ORDER BY cited_by_count DESC{limit_sql}"
+
+        df = self.engine.query_df(sql)
+        return self._normalize_dataframe(df)
+
+    def count_from_wos_query(self, wos_query: str, use_cte: bool = True) -> int:
+        """Conteo de artículos para una consulta WoS optimizada con CTE."""
+        if not wos_query or not str(wos_query).strip():
+            return 0
+        compiled = compile_wos_query(str(wos_query).strip(), table='works_flat', use_cte=use_cte)
+        if compiled.uses_cte:
+            cte_prefix = re.split(r'SELECT\s+\*\s+FROM\s+prefiltrado', compiled.sql_full, flags=re.IGNORECASE)[0]
+            sql = f"{cte_prefix}SELECT count(*) as total FROM prefiltrado WHERE {compiled.sql_where}"
+        else:
+            sql = f"SELECT count(*) as total FROM works_flat WHERE {compiled.sql_where}"
+
+        df = self.engine.query_df(sql)
+        if len(df) > 0 and 'total' in df.columns:
+            return int(df.iloc[0]['total'])
+        return 0
+
+    def preview_from_wos_query(self, wos_query: str, limit: int = 25, offset: int = 0, use_cte: bool = True) -> Dict[str, Any]:
+        """
+        Vista previa de artículos y conteo para una consulta WoS utilizando CTE optimizado.
+        """
+        if not wos_query or not str(wos_query).strip():
+            return {'total': 0, 'min_year': None, 'max_year': None, 'limit': limit, 'offset': offset, 'page': 1, 'total_pages': 1, 'results': []}
+
+        compiled = compile_wos_query(str(wos_query).strip(), table='works_flat', use_cte=use_cte)
+
+        cols = [
+            'id', 'doi', 'title', 'publication_year', 'cited_by_count', 'referenced_works_count', 'fwci',
+            'is_oa', 'oa_status', 'source_id', 'topic_id', 'topic', 'field',
+            'author_names', 'institution_names'
+        ]
+        cols_sql = ", ".join(cols)
+
+        if compiled.uses_cte:
+            cte_prefix = re.split(r'SELECT\s+\*\s+FROM\s+prefiltrado', compiled.sql_full, flags=re.IGNORECASE)[0]
+            count_sql = f"{cte_prefix}SELECT count(*) as total, min(publication_year) as min_year, max(publication_year) as max_year FROM prefiltrado WHERE {compiled.sql_where}"
+            data_sql = f"{cte_prefix}SELECT {cols_sql} FROM prefiltrado WHERE {compiled.sql_where} ORDER BY cited_by_count DESC LIMIT {limit} OFFSET {offset}"
+        else:
+            count_sql = f"SELECT count(*) as total, min(publication_year) as min_year, max(publication_year) as max_year FROM works_flat WHERE {compiled.sql_where}"
+            data_sql = f"SELECT {cols_sql} FROM works_flat WHERE {compiled.sql_where} ORDER BY cited_by_count DESC LIMIT {limit} OFFSET {offset}"
+
+        df_count = self.engine.query_df(count_sql)
+        total_works = int(df_count.iloc[0]['total']) if len(df_count) > 0 else 0
+        min_year = int(df_count.iloc[0]['min_year']) if len(df_count) > 0 and pd.notna(df_count.iloc[0]['min_year']) else None
+        max_year = int(df_count.iloc[0]['max_year']) if len(df_count) > 0 and pd.notna(df_count.iloc[0]['max_year']) else None
+
+        df_data = self.engine.query_df(data_sql)
+        records = []
+        if len(df_data) > 0:
+            for _, r in df_data.iterrows():
+                auths = r['author_names'] if isinstance(r['author_names'], list) else []
+                insts = r['institution_names'] if isinstance(r['institution_names'], list) else []
+                records.append({
+                    'id': str(r['id']).replace('https://openalex.org/', ''),
+                    'doi': str(r['doi']) if pd.notna(r['doi']) else '',
+                    'title': str(r['title']) if pd.notna(r['title']) else 'Sin título',
+                    'publication_year': int(r['publication_year']) if pd.notna(r['publication_year']) else 0,
+                    'cited_by_count': int(r['cited_by_count']) if pd.notna(r['cited_by_count']) else 0,
+                    'referenced_works_count': int(r['referenced_works_count']) if ('referenced_works_count' in r and pd.notna(r['referenced_works_count'])) else 0,
+                    'fwci': float(r['fwci']) if pd.notna(r['fwci']) else 0.0,
+                    'is_oa': bool(r['is_oa']),
+                    'oa_status': str(r['oa_status']) if pd.notna(r['oa_status']) else 'closed',
+                    'source_id': str(r['source_id']).replace('https://openalex.org/', '') if pd.notna(r['source_id']) else '',
+                    'topic': str(r['topic']) if pd.notna(r['topic']) else '',
+                    'field': str(r['field']) if pd.notna(r['field']) else '',
+                    'authors': auths[:4],
+                    'institutions': insts[:3]
+                })
+
+        return {
+            'total': total_works,
+            'min_year': min_year,
+            'max_year': max_year,
+            'limit': limit,
+            'offset': offset,
+            'page': (offset // limit) + 1 if limit > 0 else 1,
+            'total_pages': (total_works + limit - 1) // limit if limit > 0 else 1,
+            'results': records,
+            'wos_metadata': {
+                'node_count': compiled.node_count,
+                'fields_detected': compiled.fields_detected,
+                'countries_detected': compiled.countries_detected,
+                'categories_detected': compiled.categories_detected,
+                'has_near_operators': compiled.has_near_operators,
+                'near_count': compiled.near_count,
+                'term_count': compiled.term_count,
+                'phrase_count': compiled.phrase_count,
+                'wildcard_count': compiled.wildcard_count,
+                'warnings': compiled.warnings,
+                'uses_cte': compiled.uses_cte,
+            }
+        }
+
     def count_from_filters(self, filters: Dict[str, Any]) -> int:
+        if (filters.get('source_mode') == 'wos' or filters.get('wos_query')) and not self._has_other_entity_filters(filters):
+            wos_q = str(filters.get('wos_query') or filters.get('query', '')).strip()
+            if wos_q:
+                return self.count_from_wos_query(wos_q, use_cte=bool(filters.get('use_cte', True)))
+
         clauses = self._build_where_clauses(filters)
         where_sql = " AND ".join(clauses) if clauses else "1=1"
         sql = f"SELECT count(*) as total FROM works_flat WHERE {where_sql}"
@@ -453,6 +590,16 @@ class CorpusBuilder:
         return 0
 
     def preview_from_filters(self, filters: Dict[str, Any], limit: int = 25, offset: int = 0) -> Dict[str, Any]:
+        if (filters.get('source_mode') == 'wos' or filters.get('wos_query')) and not self._has_other_entity_filters(filters):
+            wos_q = str(filters.get('wos_query') or filters.get('query', '')).strip()
+            if wos_q:
+                return self.preview_from_wos_query(
+                    wos_q,
+                    limit=limit,
+                    offset=offset,
+                    use_cte=bool(filters.get('use_cte', True))
+                )
+
         clauses = self._build_where_clauses(filters)
         where_sql = " AND ".join(clauses) if clauses else "1=1"
         
@@ -507,6 +654,15 @@ class CorpusBuilder:
         }
 
     def from_filters(self, filters: Dict[str, Any], limit: Optional[int] = None) -> pd.DataFrame:
+        if (filters.get('source_mode') == 'wos' or filters.get('wos_query')) and not self._has_other_entity_filters(filters):
+            wos_q = str(filters.get('wos_query') or filters.get('query', '')).strip()
+            if wos_q:
+                return self.from_wos_query(
+                    wos_q,
+                    limit=limit,
+                    use_cte=bool(filters.get('use_cte', True))
+                )
+
         clauses = self._build_where_clauses(filters)
         where_sql = " AND ".join(clauses) if clauses else "1=1"
         limit_sql = f" LIMIT {int(limit)}" if limit and int(limit) > 0 else ""

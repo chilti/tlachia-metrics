@@ -489,9 +489,55 @@ async def search_entities(request: Request):
 
 
 # --- Búsqueda y Vista Previa de Corpus ---
+async def compile_wos_endpoint(request: Request):
+    """
+    Compila una consulta Web of Science (WoS) a SQL optimizado para ClickHouse.
+    Retorna la cláusula WHERE, la consulta completa, metadatos del AST y advertencias.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    query_str = str(body.get('query') or body.get('wos_query') or '').strip()
+    if not query_str:
+        return JSONResponse({'error': 'Se requiere una consulta en formato Web of Science en el campo query o wos_query.'}, status_code=400)
+
+    use_cte = bool(body.get('use_cte', True))
+    table = body.get('table', 'works_flat')
+
+    try:
+        from openalex_indicators_engine.core.wos_parser import compile_wos_query
+        result = compile_wos_query(query_str, table=table, use_cte=use_cte)
+        return JSONResponse({
+            'status': 'success',
+            'data': {
+                'sql_where': result.sql_where,
+                'sql_full': result.sql_full,
+                'node_count': result.node_count,
+                'fields_detected': result.fields_detected,
+                'countries_detected': result.countries_detected,
+                'categories_detected': result.categories_detected,
+                'has_near_operators': result.has_near_operators,
+                'near_count': result.near_count,
+                'term_count': result.term_count,
+                'phrase_count': result.phrase_count,
+                'wildcard_count': result.wildcard_count,
+                'warnings': result.warnings,
+                'uses_cte': result.uses_cte,
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error compilando consulta WoS: {e}", exc_info=True)
+        return JSONResponse({
+            'status': 'error',
+            'error': str(e)
+        }, status_code=400)
+
+
 async def preview_corpus(request: Request):
     """
-    Recibe filtros de búsqueda y devuelve el conteo total estimado y una muestra paginada de artículos.
+    Recibe filtros de búsqueda o consulta WoS y devuelve el conteo total estimado y una muestra paginada de artículos.
     Requiere autenticación ORCID.
     """
     auth_orcid = _check_auth(request)
@@ -507,7 +553,17 @@ async def preview_corpus(request: Request):
     offset = int(body.get('offset', 0))
 
     try:
-        preview_data = engine.corpus_builder.preview_from_filters(body, limit=limit, offset=offset)
+        source_mode = body.get('source_mode', 'filters')
+        wos_q = body.get('wos_query') or (body.get('query') if source_mode == 'wos' else None)
+        if source_mode == 'wos' or wos_q:
+            preview_data = engine.corpus_builder.preview_from_wos_query(
+                str(wos_q or '').strip(),
+                limit=limit,
+                offset=offset,
+                use_cte=bool(body.get('use_cte', True))
+            )
+        else:
+            preview_data = engine.corpus_builder.preview_from_filters(body, limit=limit, offset=offset)
         return JSONResponse(preview_data)
     except Exception as e:
         logger.error(f"Error al obtener preview del corpus: {e}", exc_info=True)
@@ -664,6 +720,14 @@ async def export_corpus_endpoint(request: Request):
             file_path = body.get('file_path')
             if file_path and Path(file_path).exists():
                 df = engine.load_corpus(file_path)
+        elif source_mode == 'wos':
+            wos_q = body.get('wos_query') or body.get('query') or (body.get('filters', {}).get('wos_query'))
+            if wos_q:
+                df = engine.corpus_builder.from_wos_query(
+                    str(wos_q).strip(),
+                    limit=limit,
+                    use_cte=bool(body.get('use_cte', True))
+                )
         else:
             df = engine.corpus_builder.from_filters(body, limit=limit)
 
@@ -709,6 +773,14 @@ def build_search_strategy_summary(source_mode: str, payload: dict) -> dict:
             'mode_label': 'Archivo Subido de Corpus',
             'description': f"Corpus estructurado desde archivo local ({fn}).",
             'details': {'filename': fn}
+        }
+    elif source_mode == 'wos':
+        wos_q = str(payload.get('wos_query') or payload.get('query') or payload.get('filters', {}).get('wos_query', '')).strip()
+        preview_q = wos_q[:140] + ('...' if len(wos_q) > 140 else '')
+        return {
+            'mode_label': 'Consulta Web of Science (WoS)',
+            'description': f"Corpus estructurado desde sintaxis WoS: {preview_q}",
+            'details': {'wos_query': wos_q, 'use_cte': payload.get('use_cte', True)}
         }
     else:
         filters = payload.get('filters', {})
@@ -800,6 +872,26 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             df = engine.load_corpus(file_path)
             raw_json_source = file_path
 
+        elif source_mode == 'wos':
+            wos_q = payload.get('wos_query') or payload.get('query') or (payload.get('filters', {}).get('wos_query'))
+            if not wos_q:
+                raise ValueError("No se especificó la consulta Web of Science (wos_query).")
+            limit_val = payload.get('limit') or payload.get('filters', {}).get('limit')
+            limit = int(limit_val) if limit_val and int(limit_val) > 0 else None
+            use_cte = bool(payload.get('use_cte', True))
+            progress_callback(8, 'Compilando consulta WoS y consultando ClickHouse con CTE...')
+            df = engine.corpus_builder.from_wos_query(str(wos_q).strip(), limit=limit, use_cte=use_cte)
+
+        # Validación para modos en memoria (upload y wos)
+        if source_mode in ('upload', 'wos') and (df is None or len(df) == 0):
+            raise ValueError("No se encontraron artículos para el corpus especificado.")
+
+        if df is not None:
+            with JOBS_LOCK:
+                job = JOBS_STORE.get(job_id)
+                if job:
+                    job['total_works'] = len(df)
+                    JOBS_STORE[job_id] = job
         # Procesar configuración de periodos consecutivos y ventanas temporales
         time_windows = payload.get('time_windows', {})
         raw_periods = time_windows.get('periods') or payload.get('periods')
@@ -1712,6 +1804,7 @@ routes = [
     Route('/api/auth/me', get_current_user_profile, methods=['GET']),
     Route('/api/entities/search', search_entities, methods=['GET']),
     Route('/api/corpus/preview', preview_corpus, methods=['POST']),
+    Route('/api/corpus/compile-wos', compile_wos_endpoint, methods=['POST']),
     Route('/api/corpus/preview-ids', preview_ids, methods=['POST']),
     Route('/api/corpus/upload-preview', upload_corpus_preview, methods=['POST']),
     Route('/api/corpus/export', export_corpus_endpoint, methods=['POST']),

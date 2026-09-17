@@ -44,6 +44,7 @@ import TablePreviewTab from './components/TablePreviewTab'
 import CorpusManagerModal from './components/CorpusManagerModal'
 import CitingWorksModal from './components/CitingWorksModal'
 import ScopusControls from './components/ScopusControls'
+import PubmedControls from './components/PubmedControls'
 import MetricsConfigTab from './components/MetricsConfigTab'
 import { useI18n } from './i18n'
 import LanguageSelector from './components/LanguageSelector'
@@ -134,6 +135,13 @@ export default function App() {
   const [scopusQuery, setScopusQuery] = useState(() => loadSessionState('scopusQuery', ''))
   const [isScopusSearching, setIsScopusSearching] = useState(false)
   const [scopusCoverageStats, setScopusCoverageStats] = useState(() => loadSessionState('scopusCoverageStats', null))
+
+  // PubMed API State
+  const [pubmedAvailable, setPubmedAvailable] = useState(true)
+  const [isPubmedMode, setIsPubmedMode] = useState(() => loadSessionState('isPubmedMode', false))
+  const [pubmedQuery, setPubmedQuery] = useState(() => loadSessionState('pubmedQuery', ''))
+  const [isPubmedSearching, setIsPubmedSearching] = useState(false)
+  const [pubmedCoverageStats, setPubmedCoverageStats] = useState(() => loadSessionState('pubmedCoverageStats', null))
 
   // User & ORCID Authentication State
   const [user, setUser] = useState(() => {
@@ -341,6 +349,15 @@ export default function App() {
       .catch(err => {
         console.warn('Could not verify Scopus status:', err)
         setScopusAvailable(false)
+      })
+
+    axios.get('/api/pubmed/status')
+      .then(res => {
+        setPubmedAvailable(Boolean(res.data.available))
+      })
+      .catch(err => {
+        console.warn('Could not verify PubMed status:', err)
+        setPubmedAvailable(false)
       })
   }, [])
 
@@ -577,6 +594,62 @@ export default function App() {
     }
   }
 
+  const handleExecutePubmedSearch = async () => {
+    if (!user) {
+      setLoginModalReason('general')
+      setLoginModalOpen(true)
+      return
+    }
+    if (!pubmedQuery.trim()) {
+      alert('Por favor especifica o genera una consulta para PubMed.')
+      return
+    }
+
+    setIsPubmedSearching(true)
+    setPreviewLoading(true)
+    setHasSearched(true)
+    try {
+      const res = await axios.post('/api/pubmed/search-and-enrich', {
+        query: pubmedQuery.trim(),
+        start_year: allYears ? undefined : startYear,
+        end_year: allYears ? undefined : endYear,
+        max_results: 10000
+      }, { timeout: 180000 })
+
+      const data = res.data
+      setPubmedCoverageStats({
+        pubmed_total_found: data.pubmed_total_found || 0,
+        pubmed_docs_fetched: data.pubmed_docs_fetched || 0,
+        matched_in_openalex: data.matched_in_openalex || 0,
+        coverage_pct: data.coverage_pct || 0.0,
+        unmatched_dois_count: data.unmatched_dois_count || 0
+      })
+
+      const displayTotal = data.matched_in_openalex || data.pubmed_docs_fetched || 0
+      setPreviewData({
+        total: displayTotal,
+        results: data.preview_results || [],
+        page: 1,
+        total_pages: Math.ceil(displayTotal / 20) || 1
+      })
+
+      if (data.work_ids?.length > 0) {
+        setIdsText(data.work_ids.join('\n'))
+      }
+
+      if (packageName === 'Mi_Corpus_TlachIA') {
+        setPackageName('Corpus_PubMed_Custom')
+      }
+    } catch (err) {
+      console.error('Error executing PubMed search:', err)
+      const errorDetail = err.response?.data?.error || err.message || 'Error de conexión con PubMed API.'
+      alert(`Error en consulta PubMed: ${errorDetail}`)
+    } finally {
+      setIsPubmedSearching(false)
+      setPreviewLoading(false)
+    }
+  }
+
   // Load Saved Corpus from Corpus Manager
   const handleLoadSavedCorpus = (corpus) => {
     if (!corpus) return
@@ -807,7 +880,7 @@ export default function App() {
         oa_status: oaStatus !== 'all' ? oaStatus : undefined,
         ids: searchMode === 'ids' ? idsText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean) : [],
         file_path: uploadResult?.file_path,
-        limit: 10000
+        limit: (format === 'enriched_csv' || format === 'csv') ? null : Math.min(previewData?.total || 50000, 50000)
       }
 
       const response = await axios.post('/api/corpus/export', payload, {
@@ -815,13 +888,28 @@ export default function App() {
         responseType: 'blob'
       })
 
-      const blob = new Blob([response.data], {
-        type: format === 'json' ? 'application/json' : 'text/csv'
-      })
+      let mimeType = 'text/csv'
+      let ext = 'csv'
+      let suffix = 'dataset_crudo'
+      if (format === 'json') {
+        mimeType = 'application/json'
+        ext = 'json'
+        suffix = 'corpus'
+      } else if (format === 'enriched_excel' || format === 'wos_excel' || format === 'xlsx') {
+        mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ext = 'xlsx'
+        suffix = 'documentos_enriquecidos'
+      } else if (format === 'enriched_csv' || format === 'wos_csv') {
+        mimeType = 'text/csv;charset=utf-8'
+        ext = 'csv'
+        suffix = 'documentos_enriquecidos'
+      }
+
+      const blob = new Blob([response.data], { type: mimeType })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${(packageName || 'Corpus_OpenAlex').trim()}_works.${format}`
+      a.download = `${(packageName || 'Corpus_OpenAlex').trim()}_${suffix}.${ext}`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -2493,51 +2581,100 @@ export default function App() {
                 {/* Search Hero & Scopus API Switcher */}
                 {searchMode === 'filters' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {/* Scopus Engine Checkbox Toggle */}
+                    {/* Scopus & PubMed Engine Checkbox Toggles */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                      <label
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          padding: '6px 14px',
-                          borderRadius: '10px',
-                          background: isScopusMode ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255, 255, 255, 0.04)',
-                          border: isScopusMode ? '1.5px solid #3b82f6' : '1px solid var(--border-color)',
-                          cursor: scopusAvailable ? 'pointer' : 'not-allowed',
-                          opacity: scopusAvailable ? 1 : 0.6,
-                          userSelect: 'none',
-                          transition: 'all 0.2s ease'
-                        }}
-                        title={!scopusAvailable ? t('builder.scopus_tooltip_unavailable') : t('builder.scopus_tooltip_available')}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isScopusMode}
-                          disabled={!scopusAvailable}
-                          onChange={(e) => {
-                            if (!user) {
-                              setLoginModalReason('filters')
-                              setLoginModalOpen(true)
-                              return
-                            }
-                            setIsScopusMode(e.target.checked)
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        {/* Scopus Toggle */}
+                        <label
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '6px 14px',
+                            borderRadius: '10px',
+                            background: isScopusMode ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                            border: isScopusMode ? '1.5px solid #3b82f6' : '1px solid var(--border-color)',
+                            cursor: scopusAvailable ? 'pointer' : 'not-allowed',
+                            opacity: scopusAvailable ? 1 : 0.6,
+                            userSelect: 'none',
+                            transition: 'all 0.2s ease'
                           }}
-                          style={{ cursor: scopusAvailable ? 'pointer' : 'not-allowed', accentColor: '#3b82f6' }}
-                        />
-                        <span style={{ fontSize: '0.82rem', fontWeight: 800, color: isScopusMode ? '#93c5fd' : 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span>{t('builder.scopus_search_checkbox')}</span>
-                          {!scopusAvailable && (
-                            <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', fontWeight: 600 }}>
-                              {t('builder.scopus_no_api_key')}
+                          title={!scopusAvailable ? t('builder.scopus_tooltip_unavailable') : t('builder.scopus_tooltip_available')}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isScopusMode}
+                            disabled={!scopusAvailable}
+                            onChange={(e) => {
+                              if (!user) {
+                                setLoginModalReason('filters')
+                                setLoginModalOpen(true)
+                                return
+                              }
+                              setIsScopusMode(e.target.checked)
+                              if (e.target.checked) setIsPubmedMode(false)
+                            }}
+                            style={{ cursor: scopusAvailable ? 'pointer' : 'not-allowed', accentColor: '#3b82f6' }}
+                          />
+                          <span style={{ fontSize: '0.82rem', fontWeight: 800, color: isScopusMode ? '#93c5fd' : 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>{t('builder.scopus_search_checkbox')}</span>
+                            {!scopusAvailable && (
+                              <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', fontWeight: 600 }}>
+                                {t('builder.scopus_no_api_key')}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+
+                        {/* PubMed Toggle */}
+                        <label
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '6px 14px',
+                            borderRadius: '10px',
+                            background: isPubmedMode ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                            border: isPubmedMode ? '1.5px solid #10b981' : '1px solid var(--border-color)',
+                            cursor: pubmedAvailable ? 'pointer' : 'not-allowed',
+                            opacity: pubmedAvailable ? 1 : 0.6,
+                            userSelect: 'none',
+                            transition: 'all 0.2s ease'
+                          }}
+                          title="Búsqueda y descarga en PubMed (NCBI Entrez E-Utilities)"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isPubmedMode}
+                            disabled={!pubmedAvailable}
+                            onChange={(e) => {
+                              if (!user) {
+                                setLoginModalReason('filters')
+                                setLoginModalOpen(true)
+                                return
+                              }
+                              setIsPubmedMode(e.target.checked)
+                              if (e.target.checked) setIsScopusMode(false)
+                            }}
+                            style={{ cursor: pubmedAvailable ? 'pointer' : 'not-allowed', accentColor: '#10b981' }}
+                          />
+                          <span style={{ fontSize: '0.82rem', fontWeight: 800, color: isPubmedMode ? '#6ee7b7' : 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>Búsqueda en PubMed (NCBI)</span>
+                            <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '6px', background: 'rgba(16, 185, 129, 0.2)', color: '#6ee7b7', fontWeight: 600 }}>
+                              XML + MEDLINE
                             </span>
-                          )}
-                        </span>
-                      </label>
+                          </span>
+                        </label>
+                      </div>
 
                       {isScopusMode && (
                         <span style={{ fontSize: '0.75rem', color: '#60a5fa', background: 'rgba(59, 130, 246, 0.1)', padding: '4px 10px', borderRadius: '8px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
                           {t('builder.scopus_badge_remote')}
+                        </span>
+                      )}
+                      {isPubmedMode && (
+                        <span style={{ fontSize: '0.75rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '4px 10px', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                          PubMed NCBI API (10 req/s activa)
                         </span>
                       )}
                     </div>
@@ -2555,6 +2692,21 @@ export default function App() {
                         onExecuteScopusSearch={handleExecuteScopusSearch}
                         isSearching={isScopusSearching}
                         coverageStats={scopusCoverageStats}
+                        user={user}
+                      />
+                    ) : isPubmedMode ? (
+                      <PubmedControls
+                        pubmedQuery={pubmedQuery}
+                        setPubmedQuery={setPubmedQuery}
+                        startYear={startYear}
+                        setStartYear={setStartYear}
+                        endYear={endYear}
+                        setEndYear={setEndYear}
+                        allYears={allYears}
+                        setAllYears={setAllYears}
+                        onExecutePubmedSearch={handleExecutePubmedSearch}
+                        isSearching={isPubmedSearching}
+                        coverageStats={pubmedCoverageStats}
                         user={user}
                       />
                     ) : (
@@ -3035,7 +3187,64 @@ export default function App() {
                       </div>
 
                       {/* Download Buttons */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        {/* Botón Documentos Enriquecidos Excel */}
+                        <button
+                          onClick={() => handleDownloadCorpus('enriched_excel')}
+                          disabled={isExportingCorpus !== null}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '8px 14px',
+                            borderRadius: '8px',
+                            background: 'rgba(16, 185, 129, 0.15)',
+                            border: '1px solid rgba(16, 185, 129, 0.4)',
+                            color: '#34d399',
+                            fontWeight: 700,
+                            fontSize: '0.8rem',
+                            cursor: isExportingCorpus !== null ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="Descargar tabla analítica de artículos en Excel profesional (.xlsx) hasta un máximo de 50,000 obras más citadas"
+                        >
+                          {isExportingCorpus === 'enriched_excel' ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <FileSpreadsheet size={14} color="#34d399" />
+                          )}
+                          <span>Documentos Enriquecidos (Excel)</span>
+                        </button>
+
+                        {/* Botón Documentos Enriquecidos CSV */}
+                        <button
+                          onClick={() => handleDownloadCorpus('enriched_csv')}
+                          disabled={isExportingCorpus !== null}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '8px 14px',
+                            borderRadius: '8px',
+                            background: 'rgba(245, 158, 11, 0.15)',
+                            border: '1px solid rgba(245, 158, 11, 0.4)',
+                            color: '#fbbf24',
+                            fontWeight: 700,
+                            fontSize: '0.8rem',
+                            cursor: isExportingCorpus !== null ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="Descargar tabla analítica completa de artículos normalizada con 29 variables por streaming sin límite (.csv)"
+                        >
+                          {isExportingCorpus === 'enriched_csv' ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <FileSpreadsheet size={14} color="#fbbf24" />
+                          )}
+                          <span>Documentos Enriquecidos (CSV)</span>
+                        </button>
+
+                        {/* Botón Dataset Crudo OpenAlex */}
                         <button
                           onClick={() => handleDownloadCorpus('csv')}
                           disabled={isExportingCorpus !== null}
@@ -3043,26 +3252,27 @@ export default function App() {
                             display: 'flex',
                             alignItems: 'center',
                             gap: '6px',
-                            padding: '8px 14px',
+                            padding: '8px 12px',
                             borderRadius: '8px',
                             background: 'rgba(56, 189, 248, 0.12)',
                             border: '1px solid rgba(56, 189, 248, 0.35)',
                             color: 'var(--accent-primary)',
-                            fontWeight: 700,
+                            fontWeight: 600,
                             fontSize: '0.8rem',
                             cursor: isExportingCorpus !== null ? 'not-allowed' : 'pointer',
                             transition: 'all 0.15s ease'
                           }}
-                          title="Descargar dataset en formato CSV con todas las variables normalizadas"
+                          title="Descargar volcado técnico completo en formato CSV con todas las variables crudas de la base de datos (73 columnas)"
                         >
                           {isExportingCorpus === 'csv' ? (
                             <Loader2 size={14} className="animate-spin" />
                           ) : (
-                            <FileSpreadsheet size={14} />
+                            <FileText size={14} />
                           )}
-                          <span>Descargar CSV</span>
+                          <span>Dataset Crudo (CSV)</span>
                         </button>
 
+                        {/* Botón JSON Completo */}
                         <button
                           onClick={() => handleDownloadCorpus('json')}
                           disabled={isExportingCorpus !== null}
@@ -3070,12 +3280,12 @@ export default function App() {
                             display: 'flex',
                             alignItems: 'center',
                             gap: '6px',
-                            padding: '8px 14px',
+                            padding: '8px 12px',
                             borderRadius: '8px',
                             background: 'rgba(167, 139, 250, 0.12)',
                             border: '1px solid rgba(167, 139, 250, 0.35)',
                             color: '#c084fc',
-                            fontWeight: 700,
+                            fontWeight: 600,
                             fontSize: '0.8rem',
                             cursor: isExportingCorpus !== null ? 'not-allowed' : 'pointer',
                             transition: 'all 0.15s ease'
@@ -3087,7 +3297,7 @@ export default function App() {
                           ) : (
                             <FileJson size={14} />
                           )}
-                          <span>Descargar JSON</span>
+                          <span>JSON Completo</span>
                         </button>
                       </div>
                     </div>

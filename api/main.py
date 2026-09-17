@@ -22,10 +22,11 @@ from typing import Dict, Any, Optional, List
 
 import httpx
 import pandas as pd
+import io
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.requests import Request
-from starlette.responses import JSONResponse, FileResponse, Response
+from starlette.responses import JSONResponse, FileResponse, Response, StreamingResponse
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -76,6 +77,15 @@ from api.routers.scopus_search import (
     estimate_scopus_volume_endpoint,
     search_and_enrich_scopus_endpoint
 )
+from api.routers.pubmed_search import (
+    get_pubmed_status_endpoint,
+    get_mesh_catalog_endpoint,
+    estimate_pubmed_volume_endpoint,
+    search_and_enrich_pubmed_endpoint,
+    export_medline_plain_text_endpoint,
+    export_pubmed_plain_text_endpoint
+)
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 logger = logging.getLogger('tlachia_api')
@@ -708,14 +718,133 @@ async def export_corpus_endpoint(request: Request):
     corpus_name = (body.get('corpus_name') or 'Corpus_OpenAlex').strip()
     safe_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in corpus_name)[:50]
     source_mode = body.get('source_mode', 'filters')
-    limit = int(body.get('limit', 10000))
+    raw_limit = body.get('limit')
+    limit = int(raw_limit) if raw_limit and int(raw_limit) > 0 else None
 
     try:
+        if fmt in ('enriched_csv', 'wos_csv', 'incites_csv'):
+            from openalex_indicators_engine.exporters.wos_documents_builder import build_wos_incites_documents_df
+
+            def stream_enriched_csv():
+                is_first = True
+                stream_iter = None
+                if source_mode == 'ids':
+                    ids_list = body.get('ids', [])
+                    chunk_sz = 10000
+                    for i in range(0, len(ids_list), chunk_sz):
+                        sub_ids = ids_list[i:i + chunk_sz]
+                        df_chunk = engine.corpus_builder.from_openalex_ids(sub_ids)
+                        if df_chunk is not None and len(df_chunk) > 0:
+                            wos_chunk = build_wos_incites_documents_df(df_chunk)
+                            buf = io.StringIO()
+                            wos_chunk.to_csv(buf, index=False, header=is_first, encoding='utf-8')
+                            is_first = False
+                            yield buf.getvalue()
+                    return
+                elif source_mode == 'upload':
+                    file_path = body.get('file_path')
+                    if file_path and Path(file_path).exists():
+                        df_full = engine.load_corpus(file_path)
+                        if df_full is not None and len(df_full) > 0:
+                            wos_full = build_wos_incites_documents_df(df_full)
+                            buf = io.StringIO()
+                            wos_full.to_csv(buf, index=False, header=True, encoding='utf-8')
+                            yield buf.getvalue()
+                    return
+                elif source_mode == 'wos':
+                    wos_q = body.get('wos_query') or body.get('query') or (body.get('filters', {}).get('wos_query'))
+                    if wos_q:
+                        stream_iter = engine.corpus_builder.stream_from_wos_query(
+                            str(wos_q).strip(),
+                            limit=limit,
+                            use_cte=bool(body.get('use_cte', True))
+                        )
+                else:
+                    stream_iter = engine.corpus_builder.stream_from_filters(body, limit=limit)
+
+                if stream_iter:
+                    for df_chunk in stream_iter:
+                        if df_chunk is not None and len(df_chunk) > 0:
+                            wos_chunk = build_wos_incites_documents_df(df_chunk)
+                            buf = io.StringIO()
+                            wos_chunk.to_csv(buf, index=False, header=is_first, encoding='utf-8')
+                            is_first = False
+                            yield buf.getvalue()
+
+            return StreamingResponse(
+                stream_enriched_csv(),
+                media_type='text/csv; charset=utf-8',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{safe_name}_documentos_enriquecidos.csv"',
+                    'Cache-Control': 'no-cache',
+                    'X-Content-Type-Options': 'nosniff'
+                }
+            )
+
+        elif fmt in ('csv', 'raw_csv'):
+            def stream_raw_csv():
+                is_first = True
+                stream_iter = None
+                if source_mode == 'ids':
+                    ids_list = body.get('ids', [])
+                    chunk_sz = 10000
+                    for i in range(0, len(ids_list), chunk_sz):
+                        sub_ids = ids_list[i:i + chunk_sz]
+                        df_chunk = engine.corpus_builder.from_openalex_ids(sub_ids)
+                        if df_chunk is not None and len(df_chunk) > 0:
+                            clean_chunk = df_chunk.drop(columns=['raw_data'], errors='ignore')
+                            buf = io.StringIO()
+                            clean_chunk.to_csv(buf, index=False, header=is_first, encoding='utf-8')
+                            is_first = False
+                            yield buf.getvalue()
+                    return
+                elif source_mode == 'upload':
+                    file_path = body.get('file_path')
+                    if file_path and Path(file_path).exists():
+                        df_full = engine.load_corpus(file_path)
+                        if df_full is not None and len(df_full) > 0:
+                            clean_full = df_full.drop(columns=['raw_data'], errors='ignore')
+                            buf = io.StringIO()
+                            clean_full.to_csv(buf, index=False, header=True, encoding='utf-8')
+                            yield buf.getvalue()
+                    return
+                elif source_mode == 'wos':
+                    wos_q = body.get('wos_query') or body.get('query') or (body.get('filters', {}).get('wos_query'))
+                    if wos_q:
+                        stream_iter = engine.corpus_builder.stream_from_wos_query(
+                            str(wos_q).strip(),
+                            limit=limit,
+                            use_cte=bool(body.get('use_cte', True))
+                        )
+                else:
+                    stream_iter = engine.corpus_builder.stream_from_filters(body, limit=limit)
+
+                if stream_iter:
+                    for df_chunk in stream_iter:
+                        if df_chunk is not None and len(df_chunk) > 0:
+                            clean_chunk = df_chunk.drop(columns=['raw_data'], errors='ignore')
+                            buf = io.StringIO()
+                            clean_chunk.to_csv(buf, index=False, header=is_first, encoding='utf-8')
+                            is_first = False
+                            yield buf.getvalue()
+
+            return StreamingResponse(
+                stream_raw_csv(),
+                media_type='text/csv; charset=utf-8',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{safe_name}_dataset_crudo.csv"',
+                    'Cache-Control': 'no-cache',
+                    'X-Content-Type-Options': 'nosniff'
+                }
+            )
+
+        # Formatos en memoria (Excel y JSON con límite seguro)
+        effective_limit = min(limit if (limit and limit > 0) else 50000, 100000)
         df = None
         if source_mode == 'ids':
             ids_list = body.get('ids', [])
             if ids_list:
-                df = engine.corpus_builder.from_openalex_ids(ids_list)
+                df = engine.corpus_builder.from_openalex_ids(ids_list[:effective_limit])
         elif source_mode == 'upload':
             file_path = body.get('file_path')
             if file_path and Path(file_path).exists():
@@ -725,11 +854,11 @@ async def export_corpus_endpoint(request: Request):
             if wos_q:
                 df = engine.corpus_builder.from_wos_query(
                     str(wos_q).strip(),
-                    limit=limit,
+                    limit=effective_limit,
                     use_cte=bool(body.get('use_cte', True))
                 )
         else:
-            df = engine.corpus_builder.from_filters(body, limit=limit)
+            df = engine.corpus_builder.from_filters(body, limit=effective_limit)
 
         if df is None or len(df) == 0:
             return JSONResponse({'error': 'No se encontraron artículos para exportar.'}, status_code=404)
@@ -741,16 +870,19 @@ async def export_corpus_endpoint(request: Request):
             return Response(
                 content=json_str,
                 media_type='application/json',
-                headers={'Content-Disposition': f'attachment; filename="{safe_name}_works.json"'}
+                headers={'Content-Disposition': f'attachment; filename="{safe_name}_corpus.json"'}
             )
-        else:
-            # CSV format: remove raw_data column if present for clean and light CSV
-            clean_df = df.drop(columns=['raw_data'], errors='ignore')
-            csv_str = clean_df.to_csv(index=False)
-            return Response(
-                content=csv_str,
-                media_type='text/csv',
-                headers={'Content-Disposition': f'attachment; filename="{safe_name}_works.csv"'}
+        elif fmt in ('enriched_excel', 'wos_excel', 'incites_excel', 'xlsx', 'excel'):
+            from openalex_indicators_engine.exporters.wos_documents_builder import build_wos_incites_documents_df
+            from openalex_indicators_engine.exporters.excel_builder import save_styled_excel
+            wos_df = build_wos_incites_documents_df(df)
+            EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            temp_excel = EXPORTS_DIR / f"{safe_name}_documentos_enriquecidos_{int(time.time())}.xlsx"
+            save_styled_excel(wos_df, temp_excel, sheet_name='Documentos_Enriquecidos')
+            return FileResponse(
+                path=str(temp_excel),
+                filename=f"{safe_name}_documentos_enriquecidos.xlsx",
+                media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
     except Exception as e:
         logger.error(f"Error exportando corpus: {e}", exc_info=True)
@@ -1328,44 +1460,75 @@ def _generate_package_json_worker(package_name: str):
             except Exception:
                 pass
 
-        df = None
+        from openalex_indicators_engine.exporters.wos_documents_builder import build_wos_incites_documents_df
+
+        source_mode = manifest_data.get('source_mode', 'filters')
+        filters = manifest_data.get('filters', {})
+        limit_val = filters.get('limit')
+        limit = int(limit_val) if limit_val and int(limit_val) > 0 else None
+
+        stream_iter = None
         work_ids_path = pkg_dir / "corpus_work_ids.parquet"
         if work_ids_path.exists():
             try:
                 df_ids = pd.read_parquet(work_ids_path)
                 if 'id' in df_ids.columns and len(df_ids) > 0:
                     clean_ids = [str(x).replace('https://openalex.org/', '').strip() for x in df_ids['id'].tolist() if pd.notna(x)]
-                    logger.info(f"Recuperando {len(clean_ids)} obras desde ClickHouse usando corpus_work_ids.parquet...")
-                    df = engine.corpus_builder.from_openalex_ids(clean_ids)
+                    def ids_chunker(ids):
+                        for i in range(0, len(ids), 10000):
+                            yield engine.corpus_builder.from_openalex_ids(ids[i:i+10000])
+                    stream_iter = ids_chunker(clean_ids)
             except Exception as e:
                 logger.warning(f"Error cargando desde corpus_work_ids.parquet: {e}")
 
-        if df is None or len(df) == 0:
-            source_mode = manifest_data.get('source_mode', 'filters')
-            filters = manifest_data.get('filters', {})
+        if stream_iter is None:
             if source_mode == 'filters' and filters:
-                limit_val = filters.get('limit')
-                limit = int(limit_val) if limit_val and int(limit_val) > 0 else None
-                logger.info(f"Recuperando obras usando filtros de manifest.json...")
-                df = engine.corpus_builder.from_filters(filters, limit=limit)
+                logger.info(f"Streaming de obras usando filtros de manifest.json...")
+                stream_iter = engine.corpus_builder.stream_from_filters(filters, limit=limit)
+            elif source_mode == 'wos':
+                wos_q = manifest_data.get('search_strategy', {}).get('details', {}).get('wos_query') or filters.get('wos_query')
+                if wos_q:
+                    stream_iter = engine.corpus_builder.stream_from_wos_query(str(wos_q).strip(), limit=limit)
             elif source_mode == 'ids' and manifest_data.get('ids'):
-                df = engine.corpus_builder.from_openalex_ids(manifest_data['ids'])
+                ids_list = manifest_data['ids']
+                def ids_chunker(ids):
+                    for i in range(0, len(ids), 10000):
+                        yield engine.corpus_builder.from_openalex_ids(ids[i:i+10000])
+                stream_iter = ids_chunker(ids_list)
             elif source_mode == 'upload':
                 uploaded = manifest_data.get('uploaded_file')
                 if uploaded and Path(uploaded).exists():
-                    df = engine.load_corpus(uploaded)
+                    stream_iter = [engine.load_corpus(uploaded)]
 
-        if df is None or len(df) == 0:
+        if stream_iter is None:
             raise ValueError(f"No se pudieron recuperar las obras del corpus para {package_name}.")
 
         works_csv_path = pkg_dir / f"{package_name}_openalex_works.csv"
-        logger.info(f"Escribiendo dataset CSV consolidado con {len(df)} registros en {works_csv_path}...")
+        enriched_csv_path = pkg_dir / f"{package_name}_documentos_enriquecidos.csv"
+        logger.info(f"Escribiendo datasets CSV consolidado y enriquecido por streaming en {pkg_dir}...")
 
-        # Exportar CSV ordenado por citas de manera compacta y ligera
-        df.to_csv(works_csv_path, index=False, encoding='utf-8')
-        logger.info(f"Dataset CSV de obras generado exitosamente ({works_csv_path.stat().st_size} bytes).")
+        first_chunk = True
+        total_rows_written = 0
 
-        # Si existe archivo .ZIP, anexar el archivo CSV directamente al zip
+        with open(works_csv_path, 'w', encoding='utf-8') as f_works, open(enriched_csv_path, 'w', encoding='utf-8') as f_enriched:
+            for chunk_df in stream_iter:
+                if chunk_df is None or len(chunk_df) == 0:
+                    continue
+                clean_chunk = chunk_df.drop(columns=['raw_data'], errors='ignore')
+                clean_chunk.to_csv(f_works, index=False, header=first_chunk, encoding='utf-8')
+
+                wos_chunk = build_wos_incites_documents_df(chunk_df)
+                wos_chunk.to_csv(f_enriched, index=False, header=first_chunk, encoding='utf-8')
+
+                first_chunk = False
+                total_rows_written += len(chunk_df)
+
+        if total_rows_written == 0:
+            raise ValueError(f"No se pudieron recuperar obras del corpus para {package_name}.")
+
+        logger.info(f"Datasets generados con éxito ({total_rows_written} registros).")
+
+        # Si existe archivo .ZIP, anexar ambos archivos CSV directamente al zip
         zip_file = pkg_dir / f"{package_name}.zip"
         if zip_file.exists():
             import zipfile
@@ -1374,13 +1537,16 @@ def _generate_package_json_worker(package_name: str):
             logger.info(f"Anexando archivo CSV de obras al .ZIP existente: {zip_file} (arcname: {arcname})...")
             with zipfile.ZipFile(zip_file, 'a', compression=zipfile.ZIP_DEFLATED) as z:
                 z.write(works_csv_path, arcname=arcname)
+                z.write(enriched_csv_path, arcname=classify_archive_path(enriched_csv_path.name))
             manifest_data['zip_size_bytes'] = zip_file.stat().st_size
 
         # Actualizar manifest.json
         manifest_data['has_works_csv'] = True
+        manifest_data['has_enriched_documents_csv'] = True
         manifest_data['has_json'] = True  # Compatibilidad con clientes que consultan has_json
         manifest_data['works_csv_generated_at'] = datetime.now().isoformat()
         manifest_data['works_csv_size_bytes'] = works_csv_path.stat().st_size
+        manifest_data['enriched_csv_size_bytes'] = enriched_csv_path.stat().st_size
         manifest_data['json_size_bytes'] = works_csv_path.stat().st_size
         try:
             with open(manifest_file, 'w', encoding='utf-8') as mf:
@@ -1838,6 +2004,12 @@ routes = [
     Route('/api/scopus/asjc-catalog', get_asjc_catalog_endpoint, methods=['GET']),
     Route('/api/scopus/estimate', estimate_scopus_volume_endpoint, methods=['POST']),
     Route('/api/scopus/search-and-enrich', search_and_enrich_scopus_endpoint, methods=['POST']),
+    Route('/api/pubmed/status', get_pubmed_status_endpoint, methods=['GET']),
+    Route('/api/pubmed/mesh-catalog', get_mesh_catalog_endpoint, methods=['GET']),
+    Route('/api/pubmed/estimate', estimate_pubmed_volume_endpoint, methods=['POST']),
+    Route('/api/pubmed/search-and-enrich', search_and_enrich_pubmed_endpoint, methods=['POST']),
+    Route('/api/pubmed/export-pubmed', export_pubmed_plain_text_endpoint, methods=['POST']),
+    Route('/api/pubmed/export-medline', export_medline_plain_text_endpoint, methods=['POST']),
 ]
 
 if FRONTEND_DIST.exists():

@@ -483,6 +483,29 @@ class CorpusBuilder:
         df = self.engine.query_df(sql)
         return self._normalize_dataframe(df)
 
+    def stream_from_wos_query(self, wos_query: str, limit: Optional[int] = None, use_cte: bool = True, chunk_size: int = 50000):
+        """
+        Generador que produce bloques de DataFrames normalizados iterando sobre ClickHouse vía streaming
+        a partir de una consulta Web of Science.
+        """
+        if not wos_query or not str(wos_query).strip():
+            return
+
+        compiled = compile_wos_query(str(wos_query).strip(), table='works_flat', use_cte=use_cte)
+        limit_sql = f" LIMIT {int(limit)}" if limit and int(limit) > 0 else ""
+
+        if compiled.uses_cte:
+            cte_prefix = re.split(r'SELECT\s+\*\s+FROM\s+prefiltrado', compiled.sql_full, flags=re.IGNORECASE)[0]
+            sql = f"{cte_prefix}SELECT * FROM prefiltrado WHERE {compiled.sql_where} ORDER BY cited_by_count DESC{limit_sql}"
+        else:
+            sql = f"SELECT * FROM works_flat WHERE {compiled.sql_where} ORDER BY cited_by_count DESC{limit_sql}"
+
+        client = self.engine.get_client()
+        with client.query_df_stream(sql, settings={'max_block_size': chunk_size}) as stream:
+            for chunk in stream:
+                if chunk is not None and len(chunk) > 0:
+                    yield self._normalize_dataframe(chunk)
+
     def count_from_wos_query(self, wos_query: str, use_cte: bool = True) -> int:
         """Conteo de artículos para una consulta WoS optimizada con CTE."""
         if not wos_query or not str(wos_query).strip():
@@ -670,37 +693,138 @@ class CorpusBuilder:
         df = self.engine.query_df(query)
         return self._normalize_dataframe(df)
 
+    def stream_from_filters(self, filters: Dict[str, Any], limit: Optional[int] = None, chunk_size: int = 50000):
+        """
+        Generador que produce bloques de DataFrames normalizados iterando sobre ClickHouse vía streaming,
+        evitando cargar todo el volumen de obras a la memoria RAM.
+        """
+        if (filters.get('source_mode') == 'wos' or filters.get('wos_query')) and not self._has_other_entity_filters(filters):
+            wos_q = str(filters.get('wos_query') or filters.get('query', '')).strip()
+            if wos_q:
+                yield from self.stream_from_wos_query(
+                    wos_q,
+                    limit=limit,
+                    use_cte=bool(filters.get('use_cte', True)),
+                    chunk_size=chunk_size
+                )
+                return
+
+        clauses = self._build_where_clauses(filters)
+        where_sql = " AND ".join(clauses) if clauses else "1=1"
+        limit_sql = f" LIMIT {int(limit)}" if limit and int(limit) > 0 else ""
+        query = f"SELECT * FROM works_flat WHERE {where_sql} ORDER BY cited_by_count DESC{limit_sql}"
+
+        client = self.engine.get_client()
+        with client.query_df_stream(query, settings={'max_block_size': chunk_size}) as stream:
+            for chunk in stream:
+                if chunk is not None and len(chunk) > 0:
+                    yield self._normalize_dataframe(chunk)
+
     def _normalize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         if df is None or len(df) == 0:
             return pd.DataFrame(columns=STANDARD_COLUMNS)
-        
+
+        df = df.copy()
+
+        # Detección y normalización de esquemas InCites / Web of Science / PubMed / Scopus
+        # 1. ID Canónico
         if 'id' in df.columns:
             df['id'] = df['id'].astype(str).str.replace('https://openalex.org/', '', regex=False)
         elif 'Work ID' in df.columns:
             df['id'] = df['Work ID'].astype(str).str.replace('https://openalex.org/', '', regex=False)
+        elif 'Accession Number' in df.columns:
+            df['id'] = df['Accession Number'].astype(str).str.strip()
+        elif 'Pubmed ID' in df.columns:
+            clean_pmid = df['Pubmed ID'].astype(str).str.replace('MEDLINE:', '', regex=False).str.strip()
+            df['id'] = clean_pmid
+        elif 'PMID' in df.columns:
+            df['id'] = df['PMID'].astype(str).str.strip()
+        elif 'pmid' in df.columns:
+            df['id'] = df['pmid'].astype(str).str.strip()
+        elif 'DOI' in df.columns:
+            df['id'] = df['DOI'].astype(str).str.strip()
+        elif 'doi' in df.columns:
+            df['id'] = df['doi'].astype(str).str.strip()
+        else:
+            df['id'] = [f"custom_work_{i}" for i in range(len(df))]
+
+        # 2. DOI
+        if 'doi' not in df.columns:
+            for alt_doi in ('DOI', 'DI', 'Digital Object Identifier'):
+                if alt_doi in df.columns:
+                    df['doi'] = df[alt_doi].astype(str).str.strip().replace({'nan': '', 'None': ''})
+                    break
+
+        # 3. Título
+        if 'title' not in df.columns:
+            for alt_title in ('Article Title', 'Title', 'TI', 'display_name', 'document_title'):
+                if alt_title in df.columns:
+                    df['title'] = df[alt_title].astype(str).str.strip()
+                    break
+
+        # 4. Revista / Fuente
+        if 'source_name' not in df.columns:
+            for alt_source in ('Source', 'Source title', 'Journal', 'SO', 'journal_title'):
+                if alt_source in df.columns:
+                    df['source_name'] = df[alt_source].astype(str).str.strip()
+                    break
+
+        # 5. Autores
+        if 'author_names' not in df.columns:
+            for alt_auth in ('Authors', 'Author Full Names', 'AU', 'AF', 'authors'):
+                if alt_auth in df.columns:
+                    def parse_authors(val):
+                        if isinstance(val, (list, tuple)):
+                            return [str(a).strip() for a in val if str(a).strip()]
+                        if pd.isna(val) or not str(val).strip():
+                            return []
+                        s = str(val).strip()
+                        # Separar por punto y coma si es WoS/InCites
+                        if ';' in s:
+                            return [a.strip() for a in s.split(';') if a.strip()]
+                        elif ',' in s and not any(c.isdigit() for c in s):
+                            return [a.strip() for a in s.split(',') if a.strip()]
+                        return [s]
+                    df['author_names'] = df[alt_auth].apply(parse_authors)
+                    break
+
+        # 6. Categorías / Subfield
+        if 'subfield' not in df.columns or df['subfield'].isna().all():
+            for alt_cat in ('Research Area', 'WoS Categories', 'Web of Science Categories', 'WC'):
+                if alt_cat in df.columns:
+                    df['subfield'] = df[alt_cat].astype(str).str.strip()
+                    if 'field' not in df.columns:
+                        df['field'] = df['subfield']
+                    break
 
         num_cols = {
-            'publication_year': ('Year', 0, int),
-            'cited_by_count': ('Citation count', 0, int),
-            'fwci': ('FWCI', 0.0, float),
-            'percentile': ('Citation percentile by subfield', 0.0, float),
-            'is_top_10': ('Top 10% cited', 0, int),
-            'is_top_1': ('Top 1% cited', 0, int),
-            'is_oa': ('Is oa', 0, int),
-            'referenced_works_count': ('Reference count', 0, int),
-            'is_retracted': ('Retracted', 0, int),
-            'is_paratext': ('Is paratext', 0, int),
-            'is_doaj_indexed': ('DOAJ', 0, int),
-            'is_core_journal': ('CWTS core', 0, int),
-            'has_repository_fulltext': ('Has repository fulltext', 0, int),
-            'apc_paid_usd': ('Estimated APC paid', 0.0, float),
-            'apc_list_usd': ('APC sum', 0.0, float)
+            'publication_year': (['Year', 'Publication Date', 'PY', 'PubYear'], 0, int),
+            'cited_by_count': (['Citation count', 'Times Cited', 'Citations', 'TC'], 0, int),
+            'fwci': (['FWCI', 'Category Normalized Citation Impact', 'CNCI', 'Journal Normalized Citation Impact'], 0.0, float),
+            'percentile': (['Citation percentile by subfield', 'Percentile in Subject Area', 'percentile'], 0.0, float),
+            'is_top_10': (['Top 10% cited', 'is_top_10'], 0, int),
+            'is_top_1': (['Top 1% cited', 'is_top_1'], 0, int),
+            'is_oa': (['Is oa', 'is_oa', 'Open Access'], 0, int),
+            'referenced_works_count': (['Reference count', 'Cited Reference Count', 'NR'], 0, int),
+            'is_retracted': (['Retracted', 'is_retracted'], 0, int),
+            'is_paratext': (['Is paratext', 'is_paratext'], 0, int),
+            'is_doaj_indexed': (['DOAJ', 'is_doaj_indexed'], 0, int),
+            'is_core_journal': (['CWTS core', 'is_core_journal'], 0, int),
+            'has_repository_fulltext': (['Has repository fulltext'], 0, int),
+            'apc_paid_usd': (['Estimated APC paid'], 0.0, float),
+            'apc_list_usd': (['APC sum'], 0.0, float)
         }
 
-        for col, (alt_col, default_val, dtype) in num_cols.items():
-            if col not in df.columns and alt_col in df.columns:
-                df[col] = df[alt_col]
+        for col, (alt_cols, default_val, dtype) in num_cols.items():
+            if col not in df.columns:
+                for alt_col in alt_cols:
+                    if alt_col in df.columns:
+                        df[col] = df[alt_col]
+                        break
             if col in df.columns:
+                if dtype == int and col == 'publication_year':
+                    # Extraer 4 dígitos para años como '2020' o 'Nov 2020'
+                    df[col] = df[col].astype(str).str.extract(r'(\d{4})')[0]
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(default_val).astype(dtype)
             else:
                 df[col] = default_val

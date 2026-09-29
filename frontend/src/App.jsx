@@ -47,6 +47,7 @@ import ScopusControls from './components/ScopusControls'
 import PubmedControls from './components/PubmedControls'
 import MetricsConfigTab from './components/MetricsConfigTab'
 import { useI18n } from './i18n'
+import SuiteBar from './components/SuiteBar'
 import LanguageSelector from './components/LanguageSelector'
 import ThemeToggle from './components/ThemeToggle'
 
@@ -1435,6 +1436,9 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Franja Superior del Ecosistema Científico TlachIA */}
+      <SuiteBar />
+
       {/* Header */}
       <header className="app-header">
         <div className="container header-content">

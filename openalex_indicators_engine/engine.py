@@ -325,6 +325,9 @@ class TlachIAMetricsEngine:
                             'Total Times Cited': f_row.get('Times Cited', 0),
                             'Total FWCI': f_row.get('Field-Weighted Citation Impact (FWCI)', 0.0),
                         }
+                        if 'Country' in f_row and pd.notna(f_row.get('Country')):
+                            row_dict['Country'] = str(f_row.get('Country'))
+
                         prev_pl = None
                         for pl in period_labels:
                             p_data = indexed_periods.get(pl)
@@ -364,6 +367,9 @@ class TlachIAMetricsEngine:
                             prev_pl = pl
                         matrix_rows.append(row_dict)
                     df_matrix = pd.DataFrame(matrix_rows)
+                    if df_matrix is not None and not df_matrix.empty and 'Country' in df_matrix.columns:
+                        cols = [c for c in df_matrix.columns if c != 'Country'] + ['Country']
+                        df_matrix = df_matrix[cols]
 
                     if df_matrix is not None and not df_matrix.empty:
                         f_matrix = csv_dir / f'{entity_label} Performance Matrix.csv'

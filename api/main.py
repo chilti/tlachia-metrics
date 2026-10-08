@@ -46,6 +46,7 @@ from api.db_users import (
     register_user_package,
     get_package_owner_info,
     delete_user_package_record,
+    update_user_package_zip_size,
     is_user_authorized,
     is_user_admin
 )
@@ -128,6 +129,19 @@ class SharedJobStore:
                     pass
         return res
 
+    def delete(self, job_id: str):
+        f = self.cache_dir / f"{job_id}.json"
+        if f.exists():
+            try:
+                f.unlink()
+            except Exception:
+                pass
+
+    def pop(self, job_id: str, default=None):
+        val = self.get(job_id, default)
+        self.delete(job_id)
+        return val
+
     def _read(self, job_id: str) -> Optional[Dict[str, Any]]:
         f = self.cache_dir / f"{job_id}.json"
         if f.exists():
@@ -171,6 +185,49 @@ async def health_check(request: Request):
         'status': 'healthy',
         'service': 'TlachIA Metrics API',
         'version': '1.0.0',
+        'timestamp': datetime.now().isoformat()
+    })
+
+
+async def api_info(request: Request):
+    """Retorna información general de la API, snapshot de OpenAlex y autores del sistema."""
+    snapshot_date = "2026-09-23"
+    openalex_release = "OpenAlex Snapshot 2026-09-23"
+    try:
+        from openalex_indicators_engine.core.gentle_query_engine import GentleQueryEngine
+        engine = GentleQueryEngine()
+        client = engine.get_client()
+        res = client.query("SELECT max(updated_date) FROM works").result_rows
+        if res and res[0][0]:
+            val = str(res[0][0])
+            snapshot_date = val.split('T')[0]
+            openalex_release = f"OpenAlex Snapshot {snapshot_date}"
+    except Exception as e:
+        print(f"Error querying snapshot in TlachIA Metrics: {e}")
+
+    return JSONResponse({
+        'status': 'online',
+        'service': 'TlachIA Metrics API',
+        'version': '2.0.0',
+        'snapshot_date': snapshot_date,
+        'openalex_release': openalex_release,
+        'authors': [
+            {
+                'name': 'Dr. Humberto Andrés Carrillo Calvet',
+                'role': 'Dirección Científica y Modelado Matemático',
+                'affiliation': 'Facultad de Ciencias y Centro de Ciencias de la Complejidad (C3), UNAM',
+                'orcid': '0000-0003-3659-6769'
+            },
+            {
+                'name': 'Dr. José Luis Jiménez Andrade',
+                'role': 'Arquitectura del Sistema, Motor de Indicadores y Pipelines Analíticos',
+                'affiliation': 'Facultad de Ciencias y Centro de Ciencias de la Complejidad (C3), UNAM',
+                'orcid': '0000-0003-3453-7159'
+            }
+        ],
+        'institution': 'Universidad Nacional Autónoma de México (UNAM)',
+        'database_engine': 'ClickHouse Pushdown Engine',
+        'database_coverage': '569M trabajos científicos / 337M autores globales',
         'timestamp': datetime.now().isoformat()
     })
 
@@ -548,16 +605,26 @@ async def compile_wos_endpoint(request: Request):
 async def preview_corpus(request: Request):
     """
     Recibe filtros de búsqueda o consulta WoS y devuelve el conteo total estimado y una muestra paginada de artículos.
-    Requiere autenticación ORCID.
+    Requiere autenticación ORCID excepto para el corpus de demostración.
     """
-    auth_orcid = _check_auth(request)
-    if not auth_orcid:
-        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID para consultar el corpus.', 'total': 0, 'results': []}, status_code=401)
-
     try:
         body = await request.json()
     except Exception:
         body = {}
+
+    auth_orcid = _check_auth(request)
+
+    # Permitir vista previa para el corpus demo (Tópico T14414, is_demo o nombre del paquete demo)
+    topic_ids = body.get('topic_ids', []) or []
+    is_demo_query = (
+        bool(body.get('is_demo')) or
+        any('T14414' in str(t) for t in topic_ids) or
+        body.get('corpus_name') in ('Artificial_Intelligence_in_Education', 'Corpus_Jose_Luis_mwko') or
+        body.get('package_name') in ('Artificial_Intelligence_in_Education', 'Corpus_Jose_Luis_mwko')
+    )
+
+    if not auth_orcid and not is_demo_query:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID para consultar el corpus.', 'total': 0, 'results': []}, status_code=401)
 
     limit = int(body.get('limit', 25))
     offset = int(body.get('offset', 0))
@@ -973,8 +1040,15 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
     try:
         source_mode = payload.get('source_mode', 'filters')
         package_name = payload.get('package_name', 'TlachIA_Report').strip().replace(' ', '_')
-        if not package_name:
-            package_name = f"Corpus_{int(time.time())}"
+        RESERVED_DEMO_PACKAGES = ("Artificial_Intelligence_in_Education", "Corpus_Jose_Luis_mwko")
+        user_orcid = payload.get('user_orcid', '')
+        if not package_name or package_name in RESERVED_DEMO_PACKAGES:
+            safe_suffix = (user_orcid.replace('-', '')[-4:] if user_orcid else '') or str(int(time.time()))[-4:]
+            base = package_name if (package_name and package_name not in RESERVED_DEMO_PACKAGES) else 'Corpus'
+            if package_name in RESERVED_DEMO_PACKAGES:
+                base = f"Corpus_{package_name}"
+            package_name = f"{base}_{safe_suffix}"
+            payload['package_name'] = package_name
 
         df = None
         raw_json_source = None
@@ -1108,7 +1182,7 @@ def _run_metrics_job_worker(job_id: str, payload: Dict[str, Any]):
             job['completed_at'] = datetime.now().isoformat()
             job['result'] = {
                 'package_name': package_name,
-                'total_works': len(df),
+                'total_works': total_works if total_works else (len(df) if df is not None else 0),
                 'total_csv_files': result.get('total_csv_files', 0),
                 'total_excel_files': result.get('total_excel_files', 0),
                 'zip_path': None,
@@ -1152,8 +1226,14 @@ async def create_computation_job(request: Request):
 
     job_id = f"job_{uuid.uuid4().hex[:12]}"
     package_name = payload.get('package_name', '').strip().replace(' ', '_')
-    if not package_name:
-        package_name = f"Corpus_{int(time.time())}"
+    RESERVED_DEMO_PACKAGES = ("Artificial_Intelligence_in_Education", "Corpus_Jose_Luis_mwko")
+    if not package_name or package_name in RESERVED_DEMO_PACKAGES:
+        safe_suffix = (user_orcid.replace('-', '')[-4:] if user_orcid else '') or str(int(time.time()))[-4:]
+        base = package_name if (package_name and package_name not in RESERVED_DEMO_PACKAGES) else 'Corpus'
+        if package_name in RESERVED_DEMO_PACKAGES:
+            base = f"Corpus_{package_name}"
+        package_name = f"{base}_{safe_suffix}"
+        payload['package_name'] = package_name
 
     job_data = {
         'job_id': job_id,
@@ -1242,11 +1322,18 @@ async def list_exported_packages(request: Request):
                     pkg_owner_orcid = manifest_data.get('owner_orcid') or owner_info.get('owner_orcid', '')
                     pkg_owner_name = manifest_data.get('owner_name') or owner_info.get('owner_name', '')
 
-                    # Filtrado de visibilidad:
-                    # - Si es admin: ve todo
-                    # - Si es usuario regular autenticado: solo ve sus paquetes
-                    if requester_orcid and not is_admin:
-                        if pkg_owner_orcid and pkg_owner_orcid != requester_orcid:
+                    # Filtrado de visibilidad institucional y modo demostración:
+                    # - Si NO está logeado: ÚNICAMENTE se muestra el corpus de ejemplo/demostración de la UNAM
+                    # - Si es usuario regular autenticado: ve sus propios paquetes y el corpus demo de la UNAM
+                    # - Si es admin: ve todos los paquetes
+                    DEMO_PACKAGE_NAME = "Artificial_Intelligence_in_Education"
+                    is_demo_pkg = item.name in (DEMO_PACKAGE_NAME, "Corpus_Jose_Luis_mwko") or manifest_data.get('is_public') or manifest_data.get('is_demo')
+
+                    if not requester_orcid:
+                        if not is_demo_pkg:
+                            continue
+                    elif not is_admin:
+                        if pkg_owner_orcid and pkg_owner_orcid != requester_orcid and not is_demo_pkg:
                             continue
 
                     total_works = manifest_data.get('total_works')
@@ -1296,6 +1383,7 @@ async def list_exported_packages(request: Request):
                         'owner_orcid': pkg_owner_orcid,
                         'owner_name': pkg_owner_name,
                         'is_owner': (requester_orcid == pkg_owner_orcid) if requester_orcid else False,
+                        'is_demo': is_demo_pkg,
                         'download_url': f"/api/indicators/download/{item.name}" if has_zip else None
                     })
     
@@ -1572,9 +1660,14 @@ def _generate_package_json_worker(package_name: str):
 
 async def generate_package_json_endpoint(request: Request):
     """
-    Inicia en segundo plano la conformación del dataset consolidado en formato CSV
+    Inicia en segundo plano la conformación de los metadatos de documentos en formato CSV
     para un paquete cienciométrico previamente calculado.
+    Requiere autenticación con ORCID.
     """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID para conformar los metadatos de documentos.'}, status_code=401)
+
     package_name = request.path_params.get('package_name', '').strip()
     if not package_name:
         return JSONResponse({'error': 'Nombre de paquete requerido.'}, status_code=400)
@@ -1659,6 +1752,111 @@ async def get_package_json_status_endpoint(request: Request):
     })
 
 
+async def remove_package_json_endpoint(request: Request):
+    """
+    Elimina los metadatos de documentos en formato CSV/JSON de un paquete cienciométrico
+    y reconstruye el archivo .ZIP para reducir su tamaño y remover los archivos pesados.
+    Requiere autenticación con ORCID.
+    """
+    auth_orcid = _check_auth(request)
+    if not auth_orcid:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID para gestionar los metadatos de documentos.'}, status_code=401)
+
+    package_name = request.path_params.get('package_name', '').strip()
+    if not package_name:
+        return JSONResponse({'error': 'Nombre de paquete requerido.'}, status_code=400)
+
+    pkg_dir = EXPORTS_DIR / package_name
+    if not pkg_dir.exists() or not pkg_dir.is_dir():
+        return JSONResponse({'error': f'Paquete "{package_name}" no encontrado en disco.'}, status_code=404)
+
+    # 1. Eliminar archivos de obras de disco si existen
+    works_csv = pkg_dir / f"{package_name}_openalex_works.csv"
+    enriched_csv = pkg_dir / f"{package_name}_documentos_enriquecidos.csv"
+    json_file = pkg_dir / f"{package_name}_openalex_works.json"
+
+    for f in (works_csv, enriched_csv, json_file):
+        if f.exists():
+            try:
+                f.unlink()
+                logger.info(f"Archivo de obras eliminado: {f}")
+            except Exception as e:
+                logger.warning(f"No se pudo eliminar archivo {f}: {e}")
+
+    # 2. Reconstruir archivo .ZIP sin los archivos de obras
+    zip_path = pkg_dir / f"{package_name}.zip"
+    new_zip_size = 0
+    if zip_path.exists():
+        csv_dir = pkg_dir / "csv_reports"
+        excel_dir = pkg_dir / "excel_reports"
+        parquet_dir = pkg_dir / "parquet_tables"
+        manifest_file = pkg_dir / "manifest.json"
+
+        files_to_zip = []
+        if csv_dir.exists():
+            files_to_zip.extend(list(csv_dir.glob('*.csv')))
+        if excel_dir.exists():
+            files_to_zip.extend(list(excel_dir.glob('*.xlsx')))
+        if parquet_dir.exists():
+            files_to_zip.extend(list(parquet_dir.glob('*.parquet')))
+        if manifest_file.exists():
+            files_to_zip.append(manifest_file)
+
+        try:
+            from openalex_indicators_engine.exporters.zip_packager import create_unified_indicators_zip
+            create_unified_indicators_zip(files_to_zip, zip_path)
+            new_zip_size = zip_path.stat().st_size
+            logger.info(f"Archivo .ZIP reconstruido para {package_name} (nuevo tamaño: {new_zip_size} bytes).")
+        except Exception as e:
+            logger.error(f"Error reconstruyendo archivo .ZIP para {package_name}: {e}", exc_info=True)
+
+    # 3. Actualizar manifest.json
+    manifest_file = pkg_dir / "manifest.json"
+    manifest_data = {}
+    if manifest_file.exists():
+        try:
+            with open(manifest_file, 'r', encoding='utf-8') as mf:
+                manifest_data = json.load(mf)
+        except Exception:
+            manifest_data = {}
+
+    manifest_data['has_works_csv'] = False
+    manifest_data['has_enriched_documents_csv'] = False
+    manifest_data['has_json'] = False
+    manifest_data.pop('works_csv_generated_at', None)
+    manifest_data.pop('works_csv_size_bytes', None)
+    manifest_data.pop('enriched_csv_size_bytes', None)
+    manifest_data.pop('json_size_bytes', None)
+    if new_zip_size > 0:
+        manifest_data['zip_size_bytes'] = new_zip_size
+
+    try:
+        with open(manifest_file, 'w', encoding='utf-8') as mf:
+            json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Error actualizando manifest.json tras remover obras: {e}")
+
+    # 4. Actualizar SQLite si se tiene tamaño nuevo
+    if new_zip_size > 0:
+        try:
+            update_user_package_zip_size(package_name, new_zip_size)
+        except Exception as e:
+            logger.warning(f"Error actualizando tamaño en user_packages: {e}")
+
+    # 5. Limpiar estado en memoria
+    JSON_JOBS_STORE.pop(package_name, None)
+
+    return JSONResponse({
+        'status': 'success',
+        'package_name': package_name,
+        'message': f'Datasets de obras en CSV removidos exitosamente del paquete "{package_name}".',
+        'has_json': False,
+        'has_works_csv': False,
+        'zip_size_bytes': new_zip_size,
+        'zip_size_mb': round(new_zip_size / (1024 * 1024), 2)
+    })
+
+
 AVAILABLE_INDICATOR_TABLES = [
     {"id": "corpus", "name": "Corpus Completo (Baseline)", "icon": "📦", "slug": "corpus"},
     {"id": "locations", "name": "Locations (Países)", "icon": "🌐", "slug": "locations"},
@@ -1729,11 +1927,22 @@ async def preview_table_endpoint(request: Request):
     """
     Retorna los datos estructurados, ordenables y paginados de una tabla parquet generada.
     """
-    auth_orcid = _check_auth(request)
-    if not auth_orcid:
-        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
-
     package_name = request.path_params.get('package_name', '').strip()
+    target_dir = EXPORTS_DIR / package_name
+    manifest_file = target_dir / "manifest.json"
+    is_manifest_public = False
+    if manifest_file.exists():
+        try:
+            with open(manifest_file, 'r', encoding='utf-8') as mf:
+                mdata = json.load(mf)
+                is_manifest_public = bool(mdata.get('is_public') or mdata.get('is_demo'))
+        except Exception:
+            pass
+    is_demo_pkg = package_name in ("Artificial_Intelligence_in_Education", "Corpus_Jose_Luis_mwko") or is_manifest_public
+
+    auth_orcid = _check_auth(request)
+    if not auth_orcid and not is_demo_pkg:
+        return JSONResponse({'error': 'Acceso no autorizado. Inicia sesión con ORCID.'}, status_code=401)
     table_id = request.query_params.get('table', 'organizations').strip().lower()
     period = request.query_params.get('period', 'full').strip().lower()
     page = max(1, int(request.query_params.get('page', 1)))
@@ -1896,6 +2105,9 @@ async def delete_exported_package(request: Request):
     if not package_name or '..' in package_name or '/' in package_name or '\\' in package_name:
         return JSONResponse({'error': 'Nombre de paquete no válido.'}, status_code=400)
     
+    if package_name in ("Artificial_Intelligence_in_Education", "Corpus_Jose_Luis_mwko"):
+        return JSONResponse({'error': 'No se puede eliminar el corpus de demostración del sistema.'}, status_code=403)
+    
     requester_orcid = request.query_params.get('orcid') or request.headers.get('X-User-ORCID', '').strip()
     is_admin = is_user_admin(requester_orcid) if requester_orcid else False
 
@@ -1964,6 +2176,7 @@ async def serve_frontend(request: Request):
 # --- Definición de Rutas ASGI ---
 routes = [
     Route('/api/health', health_check, methods=['GET']),
+    Route('/api/info', api_info, methods=['GET']),
     Route('/api/auth/orcid/url', get_orcid_auth_url, methods=['GET']),
     Route('/api/auth/orcid/token', exchange_orcid_token, methods=['POST']),
     Route('/api/auth/users', list_registered_users, methods=['GET']),
@@ -1985,6 +2198,7 @@ routes = [
     Route('/api/indicators/packages', list_exported_packages, methods=['GET']),
     Route('/api/indicators/packages/{package_name}/generate-zip', generate_package_zip_endpoint, methods=['POST']),
     Route('/api/indicators/packages/{package_name}/generate-json', generate_package_json_endpoint, methods=['POST']),
+    Route('/api/indicators/packages/{package_name}/remove-json', remove_package_json_endpoint, methods=['POST', 'DELETE']),
     Route('/api/indicators/packages/{package_name}/json-status', get_package_json_status_endpoint, methods=['GET']),
     Route('/api/indicators/table-preview/{package_name}', preview_table_endpoint, methods=['GET']),
     Route('/api/citations/citing-works/{package_name}', get_citing_works_endpoint, methods=['GET']),

@@ -143,6 +143,27 @@ export default function OrcidLoginModal({ isOpen, onClose, reason = 'general' })
           </div>
         </div>
 
+        {/* Notice of restricted registration during pilot */}
+        <div
+          style={{
+            background: 'rgba(245, 158, 11, 0.08)',
+            borderRadius: '10px',
+            padding: '12px 14px',
+            border: '1px solid rgba(245, 158, 11, 0.25)',
+            fontSize: '0.8rem',
+            color: '#fbbf24',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '8px',
+            lineHeight: '1.4'
+          }}
+        >
+          <Lock size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
+          <span>
+            <strong>Registro restringido:</strong> El cálculo de métricas personalizadas está restringido a investigadores autorizados en lista blanca institucional. Si aún no cuentas con autorización, puedes explorar y descargar libremente todas las métricas del <strong>Corpus Demostrativo de la UNAM</strong>.
+          </span>
+        </div>
+
         {errorMsg && (
           <div
             style={{

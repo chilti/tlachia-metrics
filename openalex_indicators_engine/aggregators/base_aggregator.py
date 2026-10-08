@@ -110,9 +110,15 @@ class BaseAggregator:
 
                 prev_p_label = p_label
 
+            if 'Country' in f_row and pd.notna(f_row.get('Country')):
+                row_dict['Country'] = f_row.get('Country')
+
             matrix_rows.append(row_dict)
 
         res_df = pd.DataFrame(matrix_rows)
+        if not res_df.empty and 'Country' in res_df.columns:
+            cols = [c for c in res_df.columns if c != 'Country'] + ['Country']
+            res_df = res_df[cols]
         return res_df
 
     def aggregate_trend(self, df: pd.DataFrame, min_docs_per_year: int = 1) -> pd.DataFrame:
@@ -131,6 +137,18 @@ class BaseAggregator:
             metrics = calculate_summary_indicators(group, entity_name=str(ent_val))
             metrics['Name'] = str(ent_val)
             metrics['Publication Year'] = int(year)
+            if 'Country' in group.columns:
+                cc_series = group['Country'].dropna()
+                if not cc_series.empty:
+                    metrics['Country'] = str(cc_series.iloc[0]).strip().upper()
+            elif 'country_code' in group.columns:
+                cc_series = group['country_code'].dropna()
+                if not cc_series.empty:
+                    val = cc_series.iloc[0]
+                    if isinstance(val, (list, tuple, np.ndarray)) and len(val) > 0:
+                        metrics['Country'] = str(val[0]).strip().upper()
+                    elif isinstance(val, str) and val.strip():
+                        metrics['Country'] = val.strip().upper()
             rows.append(metrics)
 
         if not rows:
@@ -164,6 +182,18 @@ class BaseAggregator:
                 continue
             metrics = calculate_summary_indicators(group, entity_name=str(ent_val))
             metrics['Name'] = str(ent_val)
+            if 'Country' in group.columns:
+                cc_series = group['Country'].dropna()
+                if not cc_series.empty:
+                    metrics['Country'] = str(cc_series.iloc[0]).strip().upper()
+            elif 'country_code' in group.columns:
+                cc_series = group['country_code'].dropna()
+                if not cc_series.empty:
+                    val = cc_series.iloc[0]
+                    if isinstance(val, (list, tuple, np.ndarray)) and len(val) > 0:
+                        metrics['Country'] = str(val[0]).strip().upper()
+                    elif isinstance(val, str) and val.strip():
+                        metrics['Country'] = val.strip().upper()
             rows.append(metrics)
 
         if not rows:
@@ -209,9 +239,13 @@ class BaseAggregator:
             'avg_apc_per_doc_usd': 'Average APC per Document (USD)',
             'estimated_diamond_savings_usd': 'Estimated Diamond Savings (USD)',
             'pct_retracted': '% Retracted Papers',
-            'pct_paratext': '% Paratext Documents'
+            'pct_paratext': '% Paratext Documents',
+            'country_code': 'Country',
+            'Country': 'Country'
         }
         
-        ordered_cols = [c for c in col_mapping.values() if c in df.rename(columns=col_mapping).columns]
         df_renamed = df.rename(columns=col_mapping)
+        ordered_cols = [c for c in col_mapping.values() if c in df_renamed.columns and c != 'Country']
+        if 'Country' in df_renamed.columns:
+            ordered_cols.append('Country')
         return df_renamed[ordered_cols]

@@ -137,7 +137,12 @@ export default function TablePreviewTab({
     const currentPkg = packages.find(p => getPkgName(p) === selectedPackage)
     // If the package has selected_entities metadata, restrict to those
     if (currentPkg?.selected_entities && currentPkg.selected_entities.length > 0) {
-      const allowed = new Set(currentPkg.selected_entities)
+      const allowed = new Set(currentPkg.selected_entities.map(s => String(s).toLowerCase().replace(/ /g, '_')))
+      return TABLE_OPTIONS.filter(t => allowed.has(t.id))
+    }
+    // If selected_entities is missing but tables_summary exists, derive from it
+    if (currentPkg?.tables_summary && Object.keys(currentPkg.tables_summary).length > 0) {
+      const allowed = new Set(Object.keys(currentPkg.tables_summary).map(s => String(s).toLowerCase().replace(/ /g, '_')))
       return TABLE_OPTIONS.filter(t => allowed.has(t.id))
     }
     // Fallback: show all options (legacy packages without metadata)
@@ -151,6 +156,14 @@ export default function TablePreviewTab({
     }
   }, [effectiveTableOptions, selectedTable])
 
+  // Default to demo package or first package if none selected
+  useEffect(() => {
+    if (!selectedPackage && packages.length > 0) {
+      const demoPkg = packages.find(p => getPkgName(p) === 'Artificial_Intelligence_in_Education') || packages.find(p => p.is_demo) || packages[0]
+      setSelectedPackage(getPkgName(demoPkg))
+    }
+  }, [packages, selectedPackage])
+
   // Sync initialPackage when passed from parent (e.g. clicking "Explorar Tablas" from a specific card)
   useEffect(() => {
     if (initialPackage) {
@@ -158,13 +171,15 @@ export default function TablePreviewTab({
     }
   }, [initialPackage])
 
-  // Reset when user logs out
+  // Fallback when user logs out: keep or switch to demo package
   useEffect(() => {
     if (!user) {
-      setSelectedPackage('')
-      setTableData({ columns: [], data: [], total_rows: 0, total_pages: 1 })
+      if (packages.length > 0) {
+        const demoPkg = packages.find(p => getPkgName(p) === 'Artificial_Intelligence_in_Education') || packages.find(p => p.is_demo) || packages[0]
+        setSelectedPackage(getPkgName(demoPkg))
+      }
     }
-  }, [user])
+  }, [user, packages])
 
   // Auto-switch to newly completed package
   useEffect(() => {
@@ -175,7 +190,7 @@ export default function TablePreviewTab({
 
   // Fetch Table Data
   useEffect(() => {
-    if (!selectedPackage || !user) {
+    if (!selectedPackage) {
       setTableData({ columns: [], data: [], total_rows: 0, total_pages: 1 })
       setLoading(false)
       setError(null)
@@ -531,7 +546,7 @@ export default function TablePreviewTab({
           {/* Table Entity Selector (Combo) */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 700 }}>
-              {t('tables.entity_label')}
+              {t('tables.entity_label', { count: effectiveTableOptions.length })}
             </label>
             <select
               value={selectedTable}

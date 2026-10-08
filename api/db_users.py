@@ -466,5 +466,15 @@ def delete_user_package_record(package_name: str):
     conn.close()
 
 
+def update_user_package_zip_size(package_name: str, zip_size_bytes: int):
+    """Actualiza el tamaño del archivo ZIP registrado para un paquete."""
+    init_users_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    cursor.execute("UPDATE user_packages SET zip_size_bytes = ? WHERE package_name = ?", (zip_size_bytes, package_name))
+    conn.commit()
+    conn.close()
+
+
 # Inicializar DB al importar
 init_users_db()

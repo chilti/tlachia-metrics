@@ -59,33 +59,208 @@ class ClickHousePushdownEngine:
     multidimensional de corpus a ClickHouse mediante SQL columnar vectorizado.
     """
     _sources_cache: Optional[Dict[str, str]] = None
+    _sources_country_cache: Optional[Dict[str, str]] = None
+    _institutions_country_cache: Optional[Dict[str, str]] = None
+    _funders_country_cache: Optional[Dict[str, str]] = None
+    _subnational_country_cache: Optional[Dict[str, str]] = None
+    _authors_country_cache: Dict[str, str] = {}
 
     def __init__(self, query_engine: Optional[GentleQueryEngine] = None):
         self.query_engine = query_engine or GentleQueryEngine()
         self.client = self.query_engine.get_client()
         self.formatter = BaseAggregator(entity_column='id')
 
-    def _get_sources_map(self) -> Dict[str, str]:
-        """Carga en caché el diccionario (id -> display_name) de fuentes para enriquecer nombres sin JOINs."""
-        if ClickHousePushdownEngine._sources_cache is None:
+    def _load_sources_maps(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """Carga en caché el diccionario (id -> display_name) y (id/name -> country_code) de fuentes sin JOINs."""
+        if ClickHousePushdownEngine._sources_cache is None or ClickHousePushdownEngine._sources_country_cache is None:
+            name_map: Dict[str, str] = {}
+            country_map: Dict[str, str] = {}
             try:
-                res = self.client.query("SELECT id, display_name FROM rag.sources WHERE display_name != ''")
-                ClickHousePushdownEngine._sources_cache = dict(res.result_rows)
+                res = self.client.query("SELECT id, display_name, country_code FROM rag.sources WHERE display_name != ''")
+                for sid, sname, scc in res.result_rows:
+                    sid_str = str(sid).strip()
+                    sname_str = str(sname).strip()
+                    scc_str = str(scc).strip().upper() if scc else ''
+                    name_map[sid_str] = sname_str
+                    short = sid_str.replace('https://openalex.org/', '')
+                    name_map[short] = sname_str
+                    if scc_str:
+                        country_map[sid_str] = scc_str
+                        country_map[short] = scc_str
+                        country_map[sname_str] = scc_str
+                        country_map[sname_str.lower()] = scc_str
+                ClickHousePushdownEngine._sources_cache = name_map
+                ClickHousePushdownEngine._sources_country_cache = country_map
             except Exception as err:
                 logger.warning(f"No se pudo cargar mapeo de rag.sources: {err}")
-                ClickHousePushdownEngine._sources_cache = {}
-        return ClickHousePushdownEngine._sources_cache
+                ClickHousePushdownEngine._sources_cache = name_map
+                ClickHousePushdownEngine._sources_country_cache = country_map
+        return ClickHousePushdownEngine._sources_cache, ClickHousePushdownEngine._sources_country_cache
+
+    def _get_sources_map(self) -> Dict[str, str]:
+        name_map, _ = self._load_sources_maps()
+        return name_map
+
+    def _get_sources_country_map(self) -> Dict[str, str]:
+        _, country_map = self._load_sources_maps()
+        return country_map
+
+    def _get_institutions_country_map(self) -> Dict[str, str]:
+        """Carga en caché el diccionario (display_name -> country_code) de instituciones sin JOINs."""
+        if ClickHousePushdownEngine._institutions_country_cache is None:
+            inst_map: Dict[str, str] = {}
+            try:
+                res = self.client.query("SELECT display_name, country_code FROM rag.institutions WHERE display_name != '' AND country_code != ''")
+                for iname, icc in res.result_rows:
+                    iname_str = str(iname).strip()
+                    icc_str = str(icc).strip().upper()
+                    if iname_str and icc_str:
+                        inst_map[iname_str] = icc_str
+                        inst_map[iname_str.lower()] = icc_str
+                ClickHousePushdownEngine._institutions_country_cache = inst_map
+            except Exception as err:
+                logger.warning(f"No se pudo cargar mapeo de rag.institutions: {err}")
+                ClickHousePushdownEngine._institutions_country_cache = inst_map
+        return ClickHousePushdownEngine._institutions_country_cache
+
+    def _get_funders_country_map(self) -> Dict[str, str]:
+        """Carga en caché el diccionario (display_name -> country_code) de financiadores sin JOINs."""
+        if ClickHousePushdownEngine._funders_country_cache is None:
+            funder_map: Dict[str, str] = {}
+            try:
+                res = self.client.query("SELECT display_name, JSONExtractString(raw_data, 'country_code') FROM rag.funders WHERE display_name != '' AND JSONExtractString(raw_data, 'country_code') != ''")
+                for fname, fcc in res.result_rows:
+                    fname_str = str(fname).strip()
+                    fcc_str = str(fcc).strip().upper()
+                    if fname_str and fcc_str:
+                        funder_map[fname_str] = fcc_str
+                        funder_map[fname_str.lower()] = fcc_str
+                ClickHousePushdownEngine._funders_country_cache = funder_map
+            except Exception as err:
+                logger.warning(f"No se pudo cargar mapeo de rag.funders: {err}")
+                ClickHousePushdownEngine._funders_country_cache = funder_map
+        return ClickHousePushdownEngine._funders_country_cache
+
+    def _get_subnational_country_map(self) -> Dict[str, str]:
+        """Carga en caché el diccionario (region/estado -> country_code) subnacional sin JOINs."""
+        if ClickHousePushdownEngine._subnational_country_cache is None:
+            sub_map: Dict[str, str] = {}
+            try:
+                res = self.client.query("""
+                    SELECT 
+                        JSONExtractString(raw_data, 'geo', 'region') AS reg, 
+                        any(country_code) AS cc 
+                    FROM rag.institutions 
+                    WHERE reg != '' AND country_code != '' 
+                    GROUP BY reg
+                """)
+                for rname, rcc in res.result_rows:
+                    rname_str = str(rname).strip()
+                    rcc_str = str(rcc).strip().upper()
+                    if rname_str and rcc_str:
+                        sub_map[rname_str] = rcc_str
+                        sub_map[rname_str.lower()] = rcc_str
+                ClickHousePushdownEngine._subnational_country_cache = sub_map
+            except Exception as err:
+                logger.warning(f"No se pudo cargar mapeo subnacional: {err}")
+                ClickHousePushdownEngine._subnational_country_cache = sub_map
+        return ClickHousePushdownEngine._subnational_country_cache
+
+    def _resolve_authors_country_map(self, author_names: List[str]) -> Dict[str, str]:
+        """Resuelve el país ISO-2 para autores/investigadores consultando rag.authors sin JOINs."""
+        if not author_names:
+            return {}
+        
+        needed = [str(a).strip() for a in author_names if a and str(a).strip() not in ClickHousePushdownEngine._authors_country_cache]
+        if needed:
+            chunk_size = 1000
+            inst_map = self._get_institutions_country_map()
+            for i in range(0, len(needed), chunk_size):
+                chunk = needed[i:i + chunk_size]
+                query_names_map = {}
+                for a in chunk:
+                    query_names_map[a] = a
+                    if ',' in a:
+                        parts = [p.strip() for p in a.split(',') if p.strip()]
+                        if len(parts) == 2:
+                            query_names_map[f"{parts[1]} {parts[0]}"] = a
+
+                escaped = [str(a).replace("'", "\\'") for a in query_names_map.keys()]
+                quoted = ", ".join(f"'{a}'" for a in escaped)
+                sql = f"""
+                SELECT 
+                    display_name, 
+                    coalesce(
+                        nullIf(anyIf(JSONExtractString(raw_data, 'last_known_institutions', 1, 'country_code'), JSONExtractString(raw_data, 'last_known_institutions', 1, 'country_code') != ''), ''),
+                        nullIf(anyIf(JSONExtractString(raw_data, 'last_known_institution', 'country_code'), JSONExtractString(raw_data, 'last_known_institution', 'country_code') != ''), ''),
+                        ''
+                    ) AS cc,
+                    anyIf(last_known_institution_name, last_known_institution_name != '') AS lki
+                FROM rag.authors 
+                WHERE display_name IN ({quoted})
+                GROUP BY display_name
+                """
+                try:
+                    res = self.client.query(sql)
+                    for aname, acc, alki in res.result_rows:
+                        aname_str = str(aname).strip()
+                        country_iso = str(acc).strip().upper() if acc else ''
+                        if not country_iso and alki:
+                            lki_str = str(alki).strip()
+                            country_iso = inst_map.get(lki_str, inst_map.get(lki_str.lower(), ''))
+                        
+                        orig_name = query_names_map.get(aname_str, aname_str)
+                        if country_iso:
+                            ClickHousePushdownEngine._authors_country_cache[aname_str] = country_iso
+                            ClickHousePushdownEngine._authors_country_cache[orig_name] = country_iso
+                except Exception as err:
+                    logger.warning(f"Error resolviendo países de autores en ClickHouse: {err}")
+                    for aname in chunk:
+                        ClickHousePushdownEngine._authors_country_cache[aname] = ''
+
+        return {str(a).strip(): ClickHousePushdownEngine._authors_country_cache.get(str(a).strip(), '') for a in author_names}
 
     def _enrich_entity_names(self, df: pd.DataFrame, entity_type: str) -> pd.DataFrame:
-        """Enriquece los identificadores de entidad con nombres descriptivos legibles."""
+        """Enriquece identificadores con nombres legibles y añade el código ISO-2 de Country."""
         if df.empty or 'Name' not in df.columns:
             return df
         e = entity_type.lower().replace(" ", "_")
+
+        # 1. Revistas / Fuentes de publicación
         if e in ('publication_sources', 'sources', 'revistas'):
-            s_map = self._get_sources_map()
-            if s_map:
-                df['Name'] = df['Name'].map(s_map).fillna(df['Name'])
+            name_map, country_map = self._load_sources_maps()
+            df['Country'] = df['Name'].map(country_map).fillna('')
+            df['Name'] = df['Name'].map(name_map).fillna(df['Name'])
+            mask_empty = (df['Country'] == '') | (df['Country'].isna())
+            if mask_empty.any():
+                df.loc[mask_empty, 'Country'] = df.loc[mask_empty, 'Name'].map(country_map).fillna('')
+
+        # 2. Organizaciones / Instituciones
+        elif e in ('organizations', 'instituciones'):
+            inst_map = self._get_institutions_country_map()
+            df['Country'] = df['Name'].map(inst_map).fillna(df['Name'].astype(str).str.lower().map(inst_map)).fillna('')
+
+        # 3. Agencias de Financiación / Funders
+        elif e in ('funding_agencies', 'funders'):
+            funder_map = self._get_funders_country_map()
+            df['Country'] = df['Name'].map(funder_map).fillna(df['Name'].astype(str).str.lower().map(funder_map)).fillna('')
+
+        # 4. Investigadores / Autores
+        elif e in ('researchers', 'autores'):
+            names = df['Name'].dropna().unique().tolist()
+            auth_map = self._resolve_authors_country_map(names)
+            df['Country'] = df['Name'].map(auth_map).fillna('')
+
+        # 5. Estados / Provincias / Subnacional
+        elif e in ('locations_subnational',):
+            sub_map = self._get_subnational_country_map()
+            df['Country'] = df['Name'].map(sub_map).fillna(df['Name'].astype(str).str.lower().map(sub_map)).fillna('')
+            mask_empty = (df['Country'] == '') | (df['Country'].isna())
+            is_iso = df['Name'].astype(str).str.match(r'^[A-Z]{2}$')
+            df.loc[mask_empty & is_iso, 'Country'] = df.loc[mask_empty & is_iso, 'Name']
+
         return df
+
 
     def setup_corpus_from_filters(self, where_sql: str, limit: Optional[int] = None, temp_table_name: Optional[str] = None) -> Tuple[str, int]:
         """

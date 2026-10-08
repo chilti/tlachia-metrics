@@ -37,7 +37,8 @@ import {
   User,
   AlertOctagon,
   AlertTriangle,
-  KeyRound
+  KeyRound,
+  Info
 } from 'lucide-react'
 import OrcidLoginModal from './components/OrcidLoginModal'
 import TablePreviewTab from './components/TablePreviewTab'
@@ -46,6 +47,7 @@ import CitingWorksModal from './components/CitingWorksModal'
 import ScopusControls from './components/ScopusControls'
 import PubmedControls from './components/PubmedControls'
 import MetricsConfigTab from './components/MetricsConfigTab'
+import AboutTab from './components/AboutTab'
 import { useI18n } from './i18n'
 import SuiteBar from './components/SuiteBar'
 import LanguageSelector from './components/LanguageSelector'
@@ -89,6 +91,39 @@ export const generateSuggestedCorpusName = (userData) => {
     return `Corpus_User_${cleanOrcid}_${rand}`
   }
   return `Corpus_${rand}`
+}
+
+export const generateSuggestedCorpusNameFromFilters = (filters, userData) => {
+  const rand = Math.random().toString(36).substring(2, 6)
+  let descriptor = ''
+  if (filters?.selectedCountries?.length > 0) {
+    descriptor = filters.selectedCountries[0].name || filters.selectedCountries[0].id || 'Country'
+  } else if (filters?.selectedTopics?.length > 0) {
+    descriptor = filters.selectedTopics[0].name || 'Topic'
+  } else if (filters?.selectedInstitutions?.length > 0) {
+    descriptor = filters.selectedInstitutions[0].name || 'Institution'
+  } else if (filters?.selectedAuthors?.length > 0) {
+    descriptor = filters.selectedAuthors[0].name || 'Author'
+  } else if (filters?.selectedSubfields?.length > 0) {
+    descriptor = filters.selectedSubfields[0].name || filters.selectedSubfields[0].subfield_name || 'Subfield'
+  } else if (filters?.query?.trim()) {
+    descriptor = filters.query.trim().slice(0, 24)
+  } else if (filters?.wos_query?.trim()) {
+    descriptor = 'WoS_Query'
+  }
+
+  if (descriptor) {
+    const cleanDesc = descriptor
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 24)
+    if (cleanDesc) {
+      return `Corpus_${cleanDesc}_${rand}`
+    }
+  }
+  return generateSuggestedCorpusName(userData)
 }
 
 export default function App() {
@@ -162,24 +197,33 @@ export default function App() {
   const [corpusManagerMode, setCorpusManagerMode] = useState('list') // 'list' | 'save'
 
   // Table Preview State
-  const [selectedPackageForTablePreview, setSelectedPackageForTablePreview] = useState(null)
+  const [selectedPackageForTablePreview, setSelectedPackageForTablePreview] = useState('Artificial_Intelligence_in_Education')
 
   // Filters State (Cumulative Multiselect)
   const [query, setQuery] = useState(() => loadSessionState('query', ''))
   const [selectedDomains, setSelectedDomains] = useState(() => loadSessionState('selectedDomains', []))
   const [selectedFields, setSelectedFields] = useState(() => loadSessionState('selectedFields', []))
   const [selectedSubfields, setSelectedSubfields] = useState(() => loadSessionState('selectedSubfields', []))
-  const [selectedTopics, setSelectedTopics] = useState(() => loadSessionState('selectedTopics', []))
+  const [selectedTopics, setSelectedTopics] = useState(() => {
+    const saved = loadSessionState('selectedTopics', null)
+    if (saved && saved.length > 0) return saved
+    if (!user) return [{ id: 'T14414', name: 'Artificial Intelligence in Education', display_name: 'Artificial Intelligence in Education' }]
+    return []
+  })
   const [topicLogic, setTopicLogic] = useState(() => loadSessionState('topicLogic', 'OR'))
   const [selectedSources, setSelectedSources] = useState(() => loadSessionState('selectedSources', []))
-  const [selectedInstitutions, setSelectedInstitutions] = useState(() => loadSessionState('selectedInstitutions', []))
+  const [selectedInstitutions, setSelectedInstitutions] = useState(() => {
+    const saved = loadSessionState('selectedInstitutions', null)
+    if (saved && saved.length > 0) return saved
+    return []
+  })
   const [institutionLogic, setInstitutionLogic] = useState(() => loadSessionState('institutionLogic', 'OR'))
   const [selectedAuthors, setSelectedAuthors] = useState(() => loadSessionState('selectedAuthors', []))
   const [authorLogic, setAuthorLogic] = useState(() => loadSessionState('authorLogic', 'OR'))
   const [selectedCountries, setSelectedCountries] = useState(() => loadSessionState('selectedCountries', []))
   const [countryLogic, setCountryLogic] = useState(() => loadSessionState('countryLogic', 'OR'))
   const [selectedTypes, setSelectedTypes] = useState(() => loadSessionState('selectedTypes', []))
-  const [startYear, setStartYear] = useState(() => loadSessionState('startYear', 2015))
+  const [startYear, setStartYear] = useState(() => loadSessionState('startYear', 1900))
   const [endYear, setEndYear] = useState(() => loadSessionState('endYear', 2026))
   const [allYears, setAllYears] = useState(() => loadSessionState('allYears', true))
   const [oaStatus, setOaStatus] = useState(() => loadSessionState('oaStatus', 'all'))
@@ -200,8 +244,26 @@ export default function App() {
 
   // Results & Pagination State
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [hasSearched, setHasSearched] = useState(() => loadSessionState('hasSearched', false))
-  const [previewData, setPreviewData] = useState(() => loadSessionState('previewData', { total: 0, results: [], page: 1, total_pages: 1 }))
+  const [hasSearched, setHasSearched] = useState(() => {
+    const saved = loadSessionState('hasSearched', null)
+    if (saved !== null) return saved
+    return !user
+  })
+  const [previewData, setPreviewData] = useState(() => {
+    const saved = loadSessionState('previewData', null)
+    if (saved && saved.total > 0) return saved
+    if (!user) {
+      return {
+        total: 39388,
+        results: [],
+        page: 1,
+        total_pages: Math.ceil(39388 / 20),
+        is_demo: true,
+        corpus_name: 'Artificial_Intelligence_in_Education'
+      }
+    }
+    return { total: 0, results: [], page: 1, total_pages: 1 }
+  })
   const [currentPage, setCurrentPage] = useState(1)
   const [isExportingCorpus, setIsExportingCorpus] = useState(null) // 'csv' | 'json' | null
   const pageSize = 20
@@ -217,14 +279,18 @@ export default function App() {
 
   // Package & Calculation State
   const [packageName, setPackageName] = useState(() => {
+    if (!user) return 'Artificial_Intelligence_in_Education'
     const saved = loadSessionState('packageName', null)
     if (saved && saved !== 'Mi_Corpus_TlachIA') return saved
-    return generateSuggestedCorpusName(user)
+    if (user) return generateSuggestedCorpusName(user)
+    return 'Artificial_Intelligence_in_Education'
   })
 
   useEffect(() => {
-    if (user && (!packageName || packageName === 'Mi_Corpus_TlachIA' || packageName.startsWith('Mi_Corpus_'))) {
+    if (user && (!packageName || packageName === 'Mi_Corpus_TlachIA' || packageName.startsWith('Mi_Corpus_') || packageName === 'Artificial_Intelligence_in_Education')) {
       setPackageName(generateSuggestedCorpusName(user))
+    } else if (!user) {
+      setPackageName('Artificial_Intelligence_in_Education')
     }
   }, [user])
   const [activeJob, setActiveJob] = useState(null)
@@ -284,6 +350,7 @@ export default function App() {
   const [loadingPackages, setLoadingPackages] = useState(false)
   const [selectedPackageDetails, setSelectedPackageDetails] = useState(null)
   const [generatingZipPackages, setGeneratingZipPackages] = useState({})
+  const [removingJsonPackages, setRemovingJsonPackages] = useState({})
 
   // Health Status
   const [apiOnline, setApiOnline] = useState(true)
@@ -430,6 +497,14 @@ export default function App() {
       return
     }
     setHasSearched(true)
+    // Desacoplar forzosamente de corpus previos y generar un nuevo nombre si el actual es demo o si hubo cálculo/carga previa
+    if (packageName === 'Artificial_Intelligence_in_Education' || loadedCorpusMetadata || lastCalculatedSignature) {
+      const suggested = generateSuggestedCorpusNameFromFilters({
+        selectedCountries, selectedTopics, selectedInstitutions, selectedAuthors, selectedSubfields, query, wos_query: wosQuery
+      }, user)
+      setPackageName(suggested)
+      setLoadedCorpusMetadata(null)
+    }
     fetchPreview(1)
   }
 
@@ -785,7 +860,8 @@ export default function App() {
 
   // Fetch Preview Works from Filters
   const fetchPreview = async (page = 1) => {
-    if (!user) return
+    const isDemoFilter = selectedTopics.some(t => t.id === 'T14414' || t.name?.includes('Artificial Intelligence in Education')) || packageName === 'Artificial_Intelligence_in_Education'
+    if (!user && !isDemoFilter) return
     setPreviewLoading(true)
     try {
       const offset = (page - 1) * pageSize
@@ -796,7 +872,9 @@ export default function App() {
           wos_query: wosQuery.trim(),
           use_cte: wosUseCte,
           limit: pageSize,
-          offset
+          offset,
+          is_demo: !user || isDemoFilter,
+          corpus_name: packageName || 'Artificial_Intelligence_in_Education'
         }
       } else {
         payload = {
@@ -821,18 +899,23 @@ export default function App() {
           end_year: allYears ? 2026 : endYear,
           oa_status: oaStatus !== 'all' ? oaStatus : undefined,
           limit: pageSize,
-          offset
+          offset,
+          is_demo: !user || isDemoFilter,
+          corpus_name: packageName || 'Artificial_Intelligence_in_Education'
         }
       }
       const res = await axios.post('/api/corpus/preview', payload)
       setPreviewData(res.data)
+      if (res.data?.results?.length > 0 || res.data?.total > 0) {
+        setHasSearched(true)
+      }
       if (res.data?.wos_metadata) {
         setWosCompiled(prev => ({ ...(prev || {}), ...res.data.wos_metadata }))
       }
       setCurrentPage(page)
     } catch (err) {
       console.error('Error fetching preview:', err)
-      if (err.response?.status === 401) {
+      if (err.response?.status === 401 && user) {
         setUser(null)
         localStorage.removeItem('tlachia_user')
         setLoginModalReason('general')
@@ -842,6 +925,14 @@ export default function App() {
       setPreviewLoading(false)
     }
   }
+
+  // Carga automática inicial de artículos de muestra para el corpus demo
+  useEffect(() => {
+    if (!user) {
+      setHasSearched(true)
+      fetchPreview(1)
+    }
+  }, [user])
 
   // Download Corpus in CSV or JSON
   const handleDownloadCorpus = async (format = 'csv') => {
@@ -1108,8 +1199,17 @@ export default function App() {
 
   // Helper to build canonical payload and deterministic signature
   const buildCorpusPayload = () => {
+    let cleanPkgName = packageName.trim().replace(/\s+/g, '_')
+    const RESERVED_DEMO_NAMES = ['Artificial_Intelligence_in_Education', 'Corpus_Jose_Luis_mwko']
+    if (!cleanPkgName || RESERVED_DEMO_NAMES.includes(cleanPkgName)) {
+      cleanPkgName = generateSuggestedCorpusNameFromFilters({
+        selectedCountries, selectedTopics, selectedInstitutions, selectedAuthors, selectedSubfields, query, wos_query: wosQuery
+      }, user)
+      setPackageName(cleanPkgName)
+    }
+
     let payload = {
-      package_name: packageName.trim().replace(/\s+/g, '_') || `Corpus_${Date.now()}`,
+      package_name: cleanPkgName,
       source_mode: searchMode
     }
 
@@ -1366,8 +1466,12 @@ export default function App() {
     return () => clearInterval(interval)
   }, [packages])
 
-  // Iniciar conformación de dataset JSON en segundo plano
+  // Iniciar conformación de metadatos de documentos en segundo plano
   const handleTriggerGenerateJson = async (packageName) => {
+    if (!user?.orcid) {
+      alert(t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para generar e incluir los metadatos de los documentos en el paquete .ZIP'))
+      return
+    }
     try {
       // Actualización optimista de estado para retroalimentación inmediata en UI
       setPackages((prev) =>
@@ -1386,8 +1490,39 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error initiating JSON generation:', err)
-      alert('Error iniciando generación de JSON: ' + (err.response?.data?.error || err.message))
+      alert('Error iniciando generación de metadatos: ' + (err.response?.data?.error || err.message))
       fetchPackages()
+    }
+  }
+
+  // Quitar metadatos CSV/JSON de obras del paquete y reconstruir el archivo ZIP
+  const handleTriggerRemoveJson = async (packageName) => {
+    if (!user?.orcid) {
+      alert(t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para gestionar los metadatos de los documentos.'))
+      return
+    }
+    const confirmMsg = t('downloads.json_remove_confirm', {
+      name: packageName,
+      defaultValue: `¿Deseas quitar los metadatos de documentos en CSV del paquete "${packageName}"?\n\nEsta acción eliminará los archivos de obras en disco y los removerá del archivo ZIP para reducir significativamente su tamaño de descarga.`
+    })
+    if (!window.confirm(confirmMsg)) {
+      return
+    }
+    setRemovingJsonPackages((prev) => ({ ...prev, [packageName]: true }))
+    try {
+      const orcidHeader = user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
+      await axios.post(
+        `/api/indicators/packages/${encodeURIComponent(packageName)}/remove-json`,
+        {},
+        { headers: orcidHeader }
+      )
+      await fetchPackages()
+    } catch (err) {
+      console.error('Error removing works CSV from package:', err)
+      alert('Error al quitar los metadatos de documentos: ' + (err.response?.data?.error || err.message))
+      fetchPackages()
+    } finally {
+      setRemovingJsonPackages((prev) => ({ ...prev, [packageName]: false }))
     }
   }
 
@@ -1418,9 +1553,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (activeTab === 'downloads' || activeTab === 'tables') {
-      fetchPackages()
-    }
+    fetchPackages()
   }, [activeTab, user])
 
   // OA Badge Helper
@@ -1494,6 +1627,13 @@ export default function App() {
                   {packages.length}
                 </span>
               )}
+            </button>
+            <button
+              className={`nav-tab ${activeTab === 'about' ? 'active' : ''}`}
+              onClick={() => setActiveTab('about')}
+            >
+              <Info size={16} />
+              {t('nav.about')}
             </button>
           </nav>
 
@@ -1604,7 +1744,11 @@ export default function App() {
 
       {/* Main Body */}
       <main className="container" style={{ flex: 1 }}>
-        {activeTab === 'tables' ? (
+        {activeTab === 'about' ? (
+          <div style={{ marginTop: '24px', marginBottom: '48px' }}>
+            <AboutTab />
+          </div>
+        ) : activeTab === 'tables' ? (
           <div style={{ marginTop: '24px', marginBottom: '48px' }}>
             <TablePreviewTab
               packages={packages}
@@ -2309,6 +2453,13 @@ export default function App() {
                           return
                         }
                         setHasSearched(true)
+                        if (packageName === 'Artificial_Intelligence_in_Education' || loadedCorpusMetadata || lastCalculatedSignature) {
+                          const suggested = generateSuggestedCorpusNameFromFilters({
+                            wos_query: wosQuery
+                          }, user)
+                          setPackageName(suggested)
+                          setLoadedCorpusMetadata(null)
+                        }
                         fetchPreview(1)
                       }}
                       disabled={!wosQuery.trim() || previewLoading}
@@ -2560,25 +2711,59 @@ export default function App() {
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', maxWidth: '560px', margin: '0 auto 20px', lineHeight: 1.5 }}>
                     {t('builder.auth_banner_desc')}
                   </p>
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => {
-                      setLoginModalReason('general')
-                      setLoginModalOpen(true)
-                    }}
-                    style={{
-                      backgroundColor: '#a6ce39',
-                      color: '#111827',
-                      padding: '12px 26px',
-                      fontSize: '0.92rem',
-                      fontWeight: 800,
-                      margin: '0 auto',
-                      boxShadow: '0 4px 16px rgba(166, 206, 57, 0.35)'
-                    }}
-                  >
-                    <span style={{ fontWeight: '900', fontSize: '15px' }}>iD</span>
-                    {t('builder.auth_banner_btn')}
-                  </button>
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => {
+                        setLoginModalReason('general')
+                        setLoginModalOpen(true)
+                      }}
+                      style={{
+                        backgroundColor: '#a6ce39',
+                        color: '#111827',
+                        padding: '12px 24px',
+                        fontSize: '0.92rem',
+                        fontWeight: 800,
+                        boxShadow: '0 4px 16px rgba(166, 206, 57, 0.35)'
+                      }}
+                    >
+                      <span style={{ fontWeight: '900', fontSize: '15px' }}>iD</span>
+                      {t('builder.auth_banner_btn')}
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        setSelectedPackageForTablePreview('Artificial_Intelligence_in_Education')
+                        setActiveTab('tables')
+                      }}
+                      style={{
+                        color: '#38bdf8',
+                        borderColor: 'rgba(56, 189, 248, 0.4)',
+                        background: 'rgba(56, 189, 248, 0.08)',
+                        padding: '12px 20px',
+                        fontSize: '0.92rem',
+                        fontWeight: 700
+                      }}
+                    >
+                      <FileSpreadsheet size={16} />
+                      {t('builder.auth_banner_view_tables', 'Explorar Tablas Demo')}
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setActiveTab('downloads')}
+                      style={{
+                        color: '#34d399',
+                        borderColor: 'rgba(52, 211, 153, 0.4)',
+                        background: 'rgba(52, 211, 153, 0.08)',
+                        padding: '12px 20px',
+                        fontSize: '0.92rem',
+                        fontWeight: 700
+                      }}
+                    >
+                      <Download size={16} />
+                      {t('builder.auth_banner_download_demo', 'Descargar Métricas Demo (.ZIP)')}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -3027,7 +3212,7 @@ export default function App() {
                         {t('builder.hero_loading_desc')}
                       </p>
                     </div>
-                  ) : !hasSearched ? (
+                  ) : (!hasSearched && (!previewData?.results || previewData.results.length === 0)) ? (
                     <div style={{ textAlign: 'center', padding: '40px 20px' }}>
                       <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'rgba(56, 189, 248, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', margin: '0 auto 16px' }}>
                         <Search size={28} />
@@ -3063,6 +3248,48 @@ export default function App() {
                     </div>
                   ) : (
                     <div>
+                      {!user && (
+                        <div style={{
+                          background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(166, 206, 57, 0.12) 100%)',
+                          border: '1px solid rgba(56, 189, 248, 0.35)',
+                          borderRadius: '12px',
+                          padding: '14px 18px',
+                          marginBottom: '16px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '12px',
+                          flexWrap: 'wrap'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '1.4rem' }}>🏛️</span>
+                            <div>
+                              <strong style={{ color: '#38bdf8', fontSize: '0.92rem' }}>Modo Demostración — Corpus UNAM</strong>
+                              <div style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>
+                                Estás explorando los <strong>241,035 trabajos</strong> de la Universidad Nacional Autónoma de México. Sus 48 reportes y 16 dimensiones analíticas ya se encuentran procesados.
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.4)' }}
+                              onClick={() => setActiveTab('tables')}
+                            >
+                              <FileSpreadsheet size={14} />
+                              Ver Tablas
+                            </button>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              style={{ backgroundColor: '#a6ce39', color: '#111827' }}
+                              onClick={() => setActiveTab('downloads')}
+                            >
+                              <Download size={14} />
+                              Centro de Descargas
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '16px', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <CheckCircle2 size={24} color="#10b981" />
@@ -3168,7 +3395,7 @@ export default function App() {
                 </div>
 
                 {/* Papers Preview Table & Export Section */}
-                {hasSearched && previewData.total > 0 && (
+                {(hasSearched || (previewData?.results && previewData.results.length > 0)) && previewData.total > 0 && (
                   <div className="glass-panel" style={{ padding: '24px', marginTop: '20px' }}>
                     {/* Header with Title and Download Buttons */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
@@ -3273,7 +3500,7 @@ export default function App() {
                           ) : (
                             <FileText size={14} />
                           )}
-                          <span>Dataset Crudo (CSV)</span>
+                          <span>Metadatos Crudos (CSV)</span>
                         </button>
 
                         {/* Botón JSON Completo */}
@@ -3646,15 +3873,27 @@ export default function App() {
                               {pkg.package_name}
                             </h3>
                           </div>
-                          {pkg.has_zip ? (
-                            <span className="badge badge-green">{t('downloads.ready_badge')}</span>
-                          ) : (
-                            <span className="badge badge-amber" style={{ fontSize: '0.72rem' }}>Pendiente .ZIP</span>
-                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {(pkg.is_demo || pkg.package_name === 'Artificial_Intelligence_in_Education') && (
+                              <span className="badge" style={{ backgroundColor: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.4)', fontSize: '0.72rem' }}>
+                                🤖 Demo: AI in Education
+                              </span>
+                            )}
+                            {pkg.has_zip ? (
+                              <span className="badge badge-green">{t('downloads.ready_badge')}</span>
+                            ) : (
+                              <span className="badge badge-amber" style={{ fontSize: '0.72rem' }}>Pendiente .ZIP</span>
+                            )}
+                          </div>
                         </div>
 
                       <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
-                        {pkg.owner_name || pkg.owner_orcid ? (
+                        {pkg.is_demo || pkg.package_name === 'Artificial_Intelligence_in_Education' ? (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(56, 189, 248, 0.08)', padding: '4px 8px', borderRadius: '4px', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
+                            <span style={{ color: '#38bdf8' }}>Colección:</span>
+                            <strong style={{ color: '#38bdf8' }}>Artificial Intelligence in Education (Demo)</strong>
+                          </div>
+                        ) : (pkg.owner_name || pkg.owner_orcid) ? (
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.03)', padding: '3px 6px', borderRadius: '4px' }}>
                             <span>{t('downloads.researcher')}</span>
                             <strong style={{ color: pkg.is_owner ? '#a6ce39' : '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -3680,37 +3919,50 @@ export default function App() {
                           </strong>
                         </div>
 
-                        {/* Checkbox interactivo para dataset JSON completo */}
+                        {/* Checkbox interactivo para metadatos de documentos en CSV */}
                         <div style={{
                           marginTop: '6px',
                           marginBottom: '4px',
                           padding: '8px 10px',
                           background: 'rgba(255, 255, 255, 0.03)',
                           borderRadius: '6px',
-                          border: '1px solid rgba(255, 255, 255, 0.07)'
+                          border: '1px solid rgba(255, 255, 255, 0.07)',
+                          opacity: !user?.orcid ? 0.78 : 1
                         }}>
-                          <label style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: '8px',
-                            cursor: (pkg.has_json || pkg.json_generating) ? 'default' : 'pointer',
-                            fontSize: '0.78rem',
-                            userSelect: 'none'
-                          }}>
+                          <label
+                            onClick={(e) => {
+                              if (!user?.orcid) {
+                                e.preventDefault()
+                                alert(t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para generar e incluir los metadatos de los documentos en el paquete .ZIP'))
+                              }
+                            }}
+                            title={!user?.orcid ? t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para generar e incluir los metadatos de los documentos en el paquete .ZIP') : ''}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '8px',
+                              cursor: !user?.orcid ? 'not-allowed' : ((pkg.json_generating || removingJsonPackages[pkg.package_name]) ? 'wait' : 'pointer'),
+                              fontSize: '0.78rem',
+                              userSelect: 'none'
+                            }}
+                          >
                             <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontWeight: 600 }}>
                               <input
                                 type="checkbox"
                                 id={`json-checkbox-${pkg.package_name}`}
                                 checked={pkg.has_json || pkg.json_generating}
-                                disabled={pkg.has_json || pkg.json_generating}
+                                disabled={!user?.orcid || pkg.json_generating || removingJsonPackages[pkg.package_name]}
                                 onChange={(e) => {
-                                  if (e.target.checked && !pkg.has_json && !pkg.json_generating) {
+                                  if (!user?.orcid) return
+                                  if (e.target.checked) {
                                     handleTriggerGenerateJson(pkg.package_name)
+                                  } else {
+                                    handleTriggerRemoveJson(pkg.package_name)
                                   }
                                 }}
                                 style={{
-                                  cursor: (pkg.has_json || pkg.json_generating) ? 'default' : 'pointer',
+                                  cursor: !user?.orcid ? 'not-allowed' : ((pkg.json_generating || removingJsonPackages[pkg.package_name]) ? 'wait' : 'pointer'),
                                   accentColor: 'var(--accent-primary)',
                                   width: '15px',
                                   height: '15px'
@@ -3718,10 +3970,16 @@ export default function App() {
                               />
                               {t('downloads.include_json_checkbox')}
                             </span>
-                            {pkg.has_json ? (
+                            {removingJsonPackages[pkg.package_name] ? (
+                              <span className="badge badge-amber" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>⏳ {t('downloads.json_removing_badge', 'Quitando metadatos de obras...')}</span>
+                            ) : pkg.has_json ? (
                               <span className="badge badge-green" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>✓ {t('downloads.json_included')}</span>
                             ) : pkg.json_generating ? (
                               <span className="badge badge-amber" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>⏳ {t('downloads.json_generating_badge')}</span>
+                            ) : !user?.orcid ? (
+                              <span className="badge badge-zinc" style={{ fontSize: '0.68rem', padding: '1px 6px', display: 'flex', alignItems: 'center', gap: '3px' }} title={t('downloads.json_login_required_tooltip')}>
+                                🔒 {t('downloads.json_login_required_badge', 'Requiere ORCID')}
+                              </span>
                             ) : (
                               <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>{t('downloads.json_not_included')}</span>
                             )}
@@ -4292,11 +4550,11 @@ export default function App() {
               </div>
 
               <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Dataset Obras (CSV)</span>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase', display: 'block' }}>Metadatos de Documentos (CSV)</span>
                 <strong style={{ fontSize: '1.1rem', color: selectedPackageDetails.has_json ? '#10b981' : 'var(--text-dim)' }}>
                   {selectedPackageDetails.has_json ? 'Incluido' : 'No'}
                 </strong>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>obras completas OpenAlex</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block' }}>fichas bibliográficas completas</span>
               </div>
             </div>
 

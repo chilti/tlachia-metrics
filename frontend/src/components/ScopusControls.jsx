@@ -709,7 +709,7 @@ export default function ScopusControls({
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-            <span>{t('scopus.scopus_total')} <strong style={{ color: '#fff' }}>{coverageStats.scopus_total_found.toLocaleString()}</strong></span>
+            <span>{t('scopus.scopus_total')} <strong style={{ color: 'var(--text-main)' }}>{coverageStats.scopus_total_found.toLocaleString()}</strong></span>
             <span>{t('scopus.openalex_matched')} <strong style={{ color: '#38bdf8' }}>{coverageStats.matched_in_openalex.toLocaleString()}</strong></span>
             {coverageStats.unmatched_dois_count > 0 && (
               <span>{t('scopus.unmatched_dois')} <strong style={{ color: '#fca5a5' }}>{coverageStats.unmatched_dois_count.toLocaleString()}</strong></span>

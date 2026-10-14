@@ -1686,7 +1686,7 @@ export default function App() {
                     iD
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
-                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#fff', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-main)', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {user.name}
                     </span>
                     <span style={{ fontSize: '0.66rem', color: user.is_admin ? '#38bdf8' : 'var(--text-dim)' }}>
@@ -3166,7 +3166,7 @@ export default function App() {
                       <Database size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_works_count')}</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_works_count')}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('builder.stats_works_label')}</div>
                     </div>
                   </div>
@@ -3176,7 +3176,7 @@ export default function App() {
                       <Users size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_researchers_count')}</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_researchers_count')}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('builder.stats_researchers_label')}</div>
                     </div>
                   </div>
@@ -3186,7 +3186,7 @@ export default function App() {
                       <Building2 size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_institutions_count')}</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_institutions_count')}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('builder.stats_institutions_label')}</div>
                     </div>
                   </div>
@@ -3196,7 +3196,7 @@ export default function App() {
                       <Library size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_sources_count')}</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', fontFamily: 'var(--font-mono)' }}>{t('builder.stats_sources_count')}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t('builder.stats_sources_label')}</div>
                     </div>
                   </div>
@@ -3317,21 +3317,21 @@ export default function App() {
                       <div style={{ background: 'var(--bg-input)', borderRadius: 'var(--radius-md)', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
                         <div>
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_time_range_label')}</span>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-main)', marginTop: '2px' }}>
                             {allYears ? `1900 — 2026 (${t('common.all')})` : `${startYear} — ${endYear}`}
                           </div>
                         </div>
 
                         <div>
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_open_access_label')}</span>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-main)', marginTop: '2px' }}>
                             {oaStatus === 'all' ? t('builder.hero_all_states') : oaStatus.toUpperCase()}
                           </div>
                         </div>
 
                         <div>
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_countries_label')}</span>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-main)', marginTop: '2px' }}>
                             {selectedCountries.length === 0
                               ? t('builder.hero_global_no_filter')
                               : `${selectedCountries.map(c => `${c.flag || ''} ${c.code || c.name}`).join(', ')} (${countryLogic})`}
@@ -3340,7 +3340,7 @@ export default function App() {
 
                         <div>
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{t('builder.hero_doc_type_label')}</span>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', marginTop: '2px' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-main)', marginTop: '2px' }}>
                             {selectedTypes.length === 0
                               ? t('builder.hero_all_types')
                               : selectedTypes.map(t => `${t.flag || ''} ${t.type_name || t.name}`).join(', ')}
@@ -3571,7 +3571,7 @@ export default function App() {
                               }}
                             >
                               <td style={{ padding: '12px 14px', verticalAlign: 'top' }}>
-                                <div style={{ fontWeight: 600, color: '#fff', marginBottom: '4px', lineHeight: 1.35 }}>
+                                <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: '4px', lineHeight: 1.35 }}>
                                   {r.title}
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.72rem', color: 'var(--text-dim)', flexWrap: 'wrap' }}>
@@ -4587,7 +4587,7 @@ export default function App() {
                     {selectedPackageDetails.filters.query && (
                       <div style={{ fontSize: '0.74rem' }}>
                         <span style={{ color: 'var(--text-dim)' }}>Texto / Query: </span>
-                        <strong style={{ color: '#fff' }}>"{selectedPackageDetails.filters.query}"</strong>
+                        <strong style={{ color: 'var(--text-main)' }}>"{selectedPackageDetails.filters.query}"</strong>
                       </div>
                     )}
                     {selectedPackageDetails.filters.country_codes?.length > 0 && (

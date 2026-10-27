@@ -351,6 +351,7 @@ export default function App() {
   const [selectedPackageDetails, setSelectedPackageDetails] = useState(null)
   const [generatingZipPackages, setGeneratingZipPackages] = useState({})
   const [removingJsonPackages, setRemovingJsonPackages] = useState({})
+  const [selectedWorksFormats, setSelectedWorksFormats] = useState({})
 
   // Health Status
   const [apiOnline, setApiOnline] = useState(true)
@@ -1466,12 +1467,14 @@ export default function App() {
     return () => clearInterval(interval)
   }, [packages])
 
-  // Iniciar conformación de metadatos de documentos en segundo plano
-  const handleTriggerGenerateJson = async (packageName) => {
+  // Iniciar conformación de metadatos de documentos en segundo plano (Parquet o CSV)
+  const handleTriggerGenerateJson = async (packageName, explicitFormat = null) => {
     if (!user?.orcid) {
-      alert(t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para generar e incluir los metadatos de los documentos en el paquete .ZIP'))
+      alert(t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para generar los metadatos de los documentos.'))
       return
     }
+    const pkg = packages.find(p => p.package_name === packageName)
+    const format = explicitFormat || selectedWorksFormats[packageName] || pkg?.recommended_format || ((pkg?.total_works || 0) > 50000 ? 'parquet' : 'csv')
     try {
       // Actualización optimista de estado para retroalimentación inmediata en UI
       setPackages((prev) =>
@@ -1481,21 +1484,21 @@ export default function App() {
       )
       const orcidHeader = user?.orcid ? { 'X-User-ORCID': user.orcid } : {}
       const res = await axios.post(
-        `/api/indicators/packages/${encodeURIComponent(packageName)}/generate-json`,
-        {},
+        `/api/indicators/packages/${encodeURIComponent(packageName)}/generate-json?format=${encodeURIComponent(format)}`,
+        { format },
         { headers: orcidHeader }
       )
       if (res.data?.status === 'completed') {
         fetchPackages()
       }
     } catch (err) {
-      console.error('Error initiating JSON generation:', err)
-      alert('Error iniciando generación de metadatos: ' + (err.response?.data?.error || err.message))
+      console.error('Error initiating works generation:', err)
+      alert('Error iniciando generación de obras: ' + (err.response?.data?.error || err.message))
       fetchPackages()
     }
   }
 
-  // Quitar metadatos CSV/JSON de obras del paquete y reconstruir el archivo ZIP
+  // Quitar metadatos de obras del paquete para liberar espacio
   const handleTriggerRemoveJson = async (packageName) => {
     if (!user?.orcid) {
       alert(t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para gestionar los metadatos de los documentos.'))
@@ -1503,7 +1506,7 @@ export default function App() {
     }
     const confirmMsg = t('downloads.json_remove_confirm', {
       name: packageName,
-      defaultValue: `¿Deseas quitar los metadatos de documentos en CSV del paquete "${packageName}"?\n\nEsta acción eliminará los archivos de obras en disco y los removerá del archivo ZIP para reducir significativamente su tamaño de descarga.`
+      defaultValue: `¿Deseas quitar los metadatos de documentos del paquete "${packageName}"?\n\nEsta acción eliminará los archivos de obras en disco (Parquet/CSV) para liberar espacio de almacenamiento.`
     })
     if (!window.confirm(confirmMsg)) {
       return
@@ -1518,7 +1521,7 @@ export default function App() {
       )
       await fetchPackages()
     } catch (err) {
-      console.error('Error removing works CSV from package:', err)
+      console.error('Error removing works from package:', err)
       alert('Error al quitar los metadatos de documentos: ' + (err.response?.data?.error || err.message))
       fetchPackages()
     } finally {
@@ -3919,91 +3922,151 @@ export default function App() {
                           </strong>
                         </div>
 
-                        {/* Checkbox interactivo para metadatos de documentos en CSV */}
-                        <div style={{
-                          marginTop: '6px',
-                          marginBottom: '4px',
-                          padding: '8px 10px',
-                          background: 'rgba(255, 255, 255, 0.03)',
-                          borderRadius: '6px',
-                          border: '1px solid rgba(255, 255, 255, 0.07)',
-                          opacity: !user?.orcid ? 0.78 : 1
-                        }}>
-                          <label
-                            onClick={(e) => {
-                              if (!user?.orcid) {
-                                e.preventDefault()
-                                alert(t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para generar e incluir los metadatos de los documentos en el paquete .ZIP'))
-                              }
-                            }}
-                            title={!user?.orcid ? t('downloads.json_login_required_tooltip', 'Inicia sesión con tu cuenta ORCID para generar e incluir los metadatos de los documentos en el paquete .ZIP') : ''}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: '8px',
-                              cursor: !user?.orcid ? 'not-allowed' : ((pkg.json_generating || removingJsonPackages[pkg.package_name]) ? 'wait' : 'pointer'),
-                              fontSize: '0.78rem',
-                              userSelect: 'none'
-                            }}
-                          >
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontWeight: 600 }}>
-                              <input
-                                type="checkbox"
-                                id={`json-checkbox-${pkg.package_name}`}
-                                checked={pkg.has_json || pkg.json_generating}
-                                disabled={!user?.orcid || pkg.json_generating || removingJsonPackages[pkg.package_name]}
-                                onChange={(e) => {
-                                  if (!user?.orcid) return
-                                  if (e.target.checked) {
-                                    handleTriggerGenerateJson(pkg.package_name)
-                                  } else {
-                                    handleTriggerRemoveJson(pkg.package_name)
-                                  }
-                                }}
-                                style={{
-                                  cursor: !user?.orcid ? 'not-allowed' : ((pkg.json_generating || removingJsonPackages[pkg.package_name]) ? 'wait' : 'pointer'),
-                                  accentColor: 'var(--accent-primary)',
-                                  width: '15px',
-                                  height: '15px'
-                                }}
-                              />
-                              {t('downloads.include_json_checkbox')}
-                            </span>
-                            {removingJsonPackages[pkg.package_name] ? (
-                              <span className="badge badge-amber" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>⏳ {t('downloads.json_removing_badge', 'Quitando metadatos de obras...')}</span>
-                            ) : pkg.has_json ? (
-                              <span className="badge badge-green" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>✓ {t('downloads.json_included')}</span>
-                            ) : pkg.json_generating ? (
-                              <span className="badge badge-amber" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>⏳ {t('downloads.json_generating_badge')}</span>
-                            ) : !user?.orcid ? (
-                              <span className="badge badge-zinc" style={{ fontSize: '0.68rem', padding: '1px 6px', display: 'flex', alignItems: 'center', gap: '3px' }} title={t('downloads.json_login_required_tooltip')}>
-                                🔒 {t('downloads.json_login_required_badge', 'Requiere ORCID')}
-                              </span>
-                            ) : (
-                              <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>{t('downloads.json_not_included')}</span>
-                            )}
-                          </label>
+                        {/* Panel de Metadatos de Documentos (Obras individuales) */}
+                        {(() => {
+                          const totalW = pkg.total_works || 0
+                          const isLarge = totalW > 50000
+                          const activeFormat = selectedWorksFormats[pkg.package_name] || pkg.works_format || pkg.recommended_format || (isLarge ? 'parquet' : 'csv')
 
-                          {pkg.json_generating && (
+                          return (
                             <div style={{
                               marginTop: '8px',
-                              padding: '6px 8px',
-                              borderRadius: '4px',
-                              background: 'rgba(245, 158, 11, 0.12)',
-                              border: '1px solid rgba(245, 158, 11, 0.35)',
-                              color: '#fbbf24',
-                              fontSize: '0.74rem',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              lineHeight: '1.3'
+                              marginBottom: '6px',
+                              padding: '10px 12px',
+                              background: 'rgba(255, 255, 255, 0.03)',
+                              borderRadius: '8px',
+                              border: '1px solid rgba(255, 255, 255, 0.08)',
                             }}>
-                              <Loader2 size={14} className="animate-spin" style={{ flexShrink: 0 }} />
-                              <span>{t('downloads.json_generating_alert')}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                                  <Database size={14} color="#38bdf8" />
+                                  {t('downloads.works_dataset_title', 'Metadatos de Documentos')}
+                                </span>
+                                {isLarge && !pkg.has_works_file && (
+                                  <span className="badge badge-amber" style={{ fontSize: '0.65rem', padding: '1px 6px' }} title="Dataset grande (>50,000 obras): se auto-selecciona formato Parquet">
+                                    ⚡ Auto-Parquet (&gt;50k)
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Estado y botones de acción */}
+                              {pkg.json_generating ? (
+                                <div style={{
+                                  padding: '6px 8px',
+                                  borderRadius: '4px',
+                                  background: 'rgba(245, 158, 11, 0.12)',
+                                  border: '1px solid rgba(245, 158, 11, 0.35)',
+                                  color: '#fbbf24',
+                                  fontSize: '0.74rem',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px'
+                                }}>
+                                  <Loader2 size={13} className="animate-spin" />
+                                  <span>{t('downloads.works_generating_alert', `Conformando obras (${activeFormat.toUpperCase()})...`)}</span>
+                                </div>
+                              ) : pkg.has_works_file ? (
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.74rem' }}>
+                                    <span style={{ color: '#4ade80', fontWeight: 500 }}>
+                                      ✓ Disponible ({(pkg.works_format || activeFormat).toUpperCase()} · {pkg.works_size_mb} MB)
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTriggerRemoveJson(pkg.package_name)}
+                                      disabled={removingJsonPackages[pkg.package_name]}
+                                      title="Eliminar obras del disco para liberar espacio"
+                                      style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: '#f87171',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        fontSize: '0.7rem'
+                                      }}
+                                    >
+                                      {removingJsonPackages[pkg.package_name] ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                                      <span>{t('downloads.remove_btn', 'Quitar')}</span>
+                                    </button>
+                                  </div>
+
+                                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                    <a
+                                      href={resolveDownloadUrl(pkg.works_download_url || `/api/indicators/packages/${encodeURIComponent(pkg.package_name)}/download-works?type=works`)}
+                                      className="btn btn-secondary"
+                                      style={{ flex: 1, minWidth: '100px', fontSize: '0.72rem', padding: '4px 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                                      download
+                                    >
+                                      <Download size={12} />
+                                      <span>Obras OpenAlex</span>
+                                    </a>
+                                    <a
+                                      href={resolveDownloadUrl(pkg.enriched_download_url || `/api/indicators/packages/${encodeURIComponent(pkg.package_name)}/download-works?type=enriched`)}
+                                      className="btn btn-secondary"
+                                      style={{ flex: 1, minWidth: '100px', fontSize: '0.72rem', padding: '4px 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                                      download
+                                    >
+                                      <Download size={12} />
+                                      <span>Doc. Enriquecidos</span>
+                                    </a>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div>
+                                  {/* Selector de formato: CSV (default) vs Parquet (auto para >50k) */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', fontSize: '0.74rem' }}>
+                                    <span style={{ color: 'var(--text-dim)' }}>Formato:</span>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: activeFormat === 'csv' ? 'var(--accent-primary)' : 'var(--text-dim)', fontWeight: activeFormat === 'csv' ? 600 : 400 }}>
+                                      <input
+                                        type="radio"
+                                        name={`works-format-${pkg.package_name}`}
+                                        value="csv"
+                                        checked={activeFormat === 'csv'}
+                                        onChange={() => setSelectedWorksFormats(prev => ({ ...prev, [pkg.package_name]: 'csv' }))}
+                                        style={{ accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
+                                      />
+                                      CSV {isLarge ? '' : '(por defecto)'}
+                                    </label>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: activeFormat === 'parquet' ? '#38bdf8' : 'var(--text-dim)', fontWeight: activeFormat === 'parquet' ? 600 : 400 }}>
+                                      <input
+                                        type="radio"
+                                        name={`works-format-${pkg.package_name}`}
+                                        value="parquet"
+                                        checked={activeFormat === 'parquet'}
+                                        onChange={() => setSelectedWorksFormats(prev => ({ ...prev, [pkg.package_name]: 'parquet' }))}
+                                        style={{ accentColor: '#38bdf8', cursor: 'pointer' }}
+                                      />
+                                      Parquet (ZSTD) {isLarge ? '⚡ auto' : ''}
+                                    </label>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => handleTriggerGenerateJson(pkg.package_name, activeFormat)}
+                                    disabled={!user?.orcid || pkg.json_generating}
+                                    title={!user?.orcid ? t('downloads.json_login_required_tooltip', 'Inicia sesión con ORCID para generar metadatos de documentos') : ''}
+                                    style={{
+                                      width: '100%',
+                                      padding: '5px 8px',
+                                      fontSize: '0.74rem',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: '6px',
+                                      opacity: !user?.orcid ? 0.7 : 1
+                                    }}
+                                  >
+                                    <Sparkles size={13} color={activeFormat === 'parquet' ? '#38bdf8' : 'var(--accent-primary)'} />
+                                    <span>Generar Obras ({activeFormat.toUpperCase()})</span>
+                                  </button>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
+                          )
+                        })()}
 
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span>{t('downloads.package_size')}</span>
@@ -4029,7 +4092,7 @@ export default function App() {
                           download
                         >
                           <Download size={16} />
-                          {t('downloads.download_zip')}
+                          {t('downloads.download_metrics_zip', 'Descargar Métricas (ZIP)')}
                         </a>
                       ) : (
                         <button

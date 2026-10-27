@@ -1351,11 +1351,25 @@ async def list_exported_packages(request: Request):
                         except Exception:
                             pass
 
+                    works_parquet_file = item / f"{item.name}_openalex_works.parquet"
+                    enriched_parquet_file = item / f"{item.name}_documentos_enriquecidos.parquet"
+                    enriched_csv_file = item / f"{item.name}_documentos_enriquecidos.csv"
+
+                    has_works_parquet = works_parquet_file.exists()
+                    has_works_csv = works_csv_file.exists()
+                    has_works_file = has_works_parquet or has_works_csv or json_file.exists()
+
+                    total_works_num = total_works if isinstance(total_works, int) else 0
+                    recommended_format = 'parquet' if total_works_num > 50000 else 'csv'
+                    works_format = 'parquet' if has_works_parquet else ('csv' if has_works_csv else recommended_format)
+
+                    works_size_bytes = works_parquet_file.stat().st_size if has_works_parquet else (works_csv_file.stat().st_size if has_works_csv else 0)
+                    works_size_mb = round(works_size_bytes / (1024 * 1024), 2)
+
                     zip_size_bytes = zip_file.stat().st_size if has_zip else 0
                     zip_size_mb = round(zip_size_bytes / (1024 * 1024), 2) if has_zip else 0
 
                     is_json_generating = JSON_JOBS_STORE.get(item.name, {}).get('status') == 'running'
-                    has_works_file = works_csv_file.exists() or json_file.exists()
 
                     packages.append({
                         'package_name': item.name,
@@ -1366,7 +1380,17 @@ async def list_exported_packages(request: Request):
                         'zip_size_mb': zip_size_mb,
                         'created_at': manifest_data.get('created_at') or datetime.fromtimestamp(stat.st_mtime).isoformat(),
                         'has_json': has_works_file,
-                        'has_works_csv': works_csv_file.exists(),
+                        'has_works_file': has_works_file,
+                        'has_works_csv': has_works_csv,
+                        'has_works_parquet': has_works_parquet,
+                        'has_enriched_csv': enriched_csv_file.exists(),
+                        'has_enriched_parquet': enriched_parquet_file.exists(),
+                        'works_format': works_format,
+                        'recommended_format': recommended_format,
+                        'works_size_bytes': works_size_bytes,
+                        'works_size_mb': works_size_mb,
+                        'works_download_url': f"/api/indicators/packages/{item.name}/download-works?type=works&format={works_format}" if has_works_file else None,
+                        'enriched_download_url': f"/api/indicators/packages/{item.name}/download-works?type=enriched&format={works_format}" if (has_works_parquet or enriched_csv_file.exists()) else None,
                         'json_generating': is_json_generating,
                         'csv_files_count': csv_count,
                         'excel_files_count': excel_count,
@@ -1463,10 +1487,6 @@ async def generate_package_zip_endpoint(request: Request):
         files_to_zip.extend(list(excel_dir.glob('*.xlsx')))
     if parquet_dir.exists():
         files_to_zip.extend(list(parquet_dir.glob('*.parquet')))
-    if works_csv_file.exists():
-        files_to_zip.append(works_csv_file)
-    if json_file.exists():
-        files_to_zip.append(json_file)
     if manifest_file.exists():
         files_to_zip.append(manifest_file)
 
@@ -1524,7 +1544,7 @@ async def generate_package_zip_endpoint(request: Request):
 
     return JSONResponse({
         'status': 'success',
-        'message': f'Paquete .ZIP para "{package_name}" generado exitosamente.',
+        'message': f'Paquete de métricas .ZIP para "{package_name}" generado exitosamente.',
         'package_name': package_name,
         'zip_size_bytes': size_b,
         'zip_size_mb': round(size_b / (1024 * 1024), 2),
@@ -1532,8 +1552,8 @@ async def generate_package_zip_endpoint(request: Request):
     })
 
 
-def _generate_package_json_worker(package_name: str):
-    logger.info(f"Iniciando conformación de dataset JSON en segundo plano para paquete: {package_name}")
+def _generate_package_json_worker(package_name: str, format_choice: str = 'csv'):
+    logger.info(f"Iniciando conformación de dataset de obras en segundo plano para paquete: {package_name} (formato: {format_choice})")
     try:
         pkg_dir = EXPORTS_DIR / package_name
         if not pkg_dir.exists():
@@ -1547,6 +1567,10 @@ def _generate_package_json_worker(package_name: str):
                     manifest_data = json.load(mf)
             except Exception:
                 pass
+
+        total_works = manifest_data.get('total_works') or 0
+        if format_choice not in ('csv', 'parquet'):
+            format_choice = 'parquet' if total_works > 50000 else 'csv'
 
         from openalex_indicators_engine.exporters.wos_documents_builder import build_wos_incites_documents_df
 
@@ -1593,8 +1617,10 @@ def _generate_package_json_worker(package_name: str):
 
         works_csv_path = pkg_dir / f"{package_name}_openalex_works.csv"
         enriched_csv_path = pkg_dir / f"{package_name}_documentos_enriquecidos.csv"
-        logger.info(f"Escribiendo datasets CSV consolidado y enriquecido por streaming en {pkg_dir}...")
+        works_parquet_path = pkg_dir / f"{package_name}_openalex_works.parquet"
+        enriched_parquet_path = pkg_dir / f"{package_name}_documentos_enriquecidos.parquet"
 
+        logger.info(f"Escribiendo datasets de obras por streaming en {pkg_dir}...")
         first_chunk = True
         total_rows_written = 0
 
@@ -1616,26 +1642,38 @@ def _generate_package_json_worker(package_name: str):
 
         logger.info(f"Datasets generados con éxito ({total_rows_written} registros).")
 
-        # Si existe archivo .ZIP, anexar ambos archivos CSV directamente al zip
-        zip_file = pkg_dir / f"{package_name}.zip"
-        if zip_file.exists():
-            import zipfile
-            from openalex_indicators_engine.exporters.zip_packager import classify_archive_path
-            arcname = classify_archive_path(works_csv_path.name)
-            logger.info(f"Anexando archivo CSV de obras al .ZIP existente: {zip_file} (arcname: {arcname})...")
-            with zipfile.ZipFile(zip_file, 'a', compression=zipfile.ZIP_DEFLATED) as z:
-                z.write(works_csv_path, arcname=arcname)
-                z.write(enriched_csv_path, arcname=classify_archive_path(enriched_csv_path.name))
-            manifest_data['zip_size_bytes'] = zip_file.stat().st_size
+        # Conversión a Parquet optimizada con DuckDB si se seleccionó formato parquet
+        if format_choice == 'parquet':
+            try:
+                import duckdb
+                logger.info(f"Convirtiendo obras a formato Parquet (Zstandard) con DuckDB...")
+                duckdb.query(f"COPY (SELECT * FROM read_csv('{works_csv_path}', auto_detect=true, all_varchar=false)) TO '{works_parquet_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+                duckdb.query(f"COPY (SELECT * FROM read_csv('{enriched_csv_path}', auto_detect=true, all_varchar=false)) TO '{enriched_parquet_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+                # Eliminar CSVs no comprimidos para optimizar espacio
+                if works_csv_path.exists():
+                    works_csv_path.unlink()
+                if enriched_csv_path.exists():
+                    enriched_csv_path.unlink()
+                logger.info("Conversión a Parquet completada exitosamente.")
+            except Exception as pe:
+                logger.error(f"Error convirtiendo a Parquet con DuckDB: {pe}", exc_info=True)
 
-        # Actualizar manifest.json
-        manifest_data['has_works_csv'] = True
-        manifest_data['has_enriched_documents_csv'] = True
-        manifest_data['has_json'] = True  # Compatibilidad con clientes que consultan has_json
-        manifest_data['works_csv_generated_at'] = datetime.now().isoformat()
-        manifest_data['works_csv_size_bytes'] = works_csv_path.stat().st_size
-        manifest_data['enriched_csv_size_bytes'] = enriched_csv_path.stat().st_size
-        manifest_data['json_size_bytes'] = works_csv_path.stat().st_size
+        has_parquet = works_parquet_path.exists()
+        has_csv = works_csv_path.exists()
+        active_format = 'parquet' if has_parquet else ('csv' if has_csv else format_choice)
+        active_file = works_parquet_path if has_parquet else works_csv_path
+        active_size = active_file.stat().st_size if active_file.exists() else 0
+
+        # Actualizar manifest.json SIN anexar obras al archivo .ZIP (desacople de métricas)
+        manifest_data['has_works_file'] = True
+        manifest_data['has_works_csv'] = has_csv
+        manifest_data['has_works_parquet'] = has_parquet
+        manifest_data['has_enriched_csv'] = enriched_csv_path.exists()
+        manifest_data['has_enriched_parquet'] = enriched_parquet_path.exists()
+        manifest_data['has_json'] = True  # Compatibilidad
+        manifest_data['works_format'] = active_format
+        manifest_data['works_size_bytes'] = active_size
+        manifest_data['works_generated_at'] = datetime.now().isoformat()
         try:
             with open(manifest_file, 'w', encoding='utf-8') as mf:
                 json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
@@ -1645,12 +1683,13 @@ def _generate_package_json_worker(package_name: str):
         JSON_JOBS_STORE[package_name] = {
             'status': 'completed',
             'finished_at': datetime.now().isoformat(),
-            'size_bytes': works_csv_path.stat().st_size
+            'format': active_format,
+            'size_bytes': active_size
         }
-        logger.info(f"Proceso de conformación CSV de obras completado para {package_name}.")
+        logger.info(f"Proceso de conformación de obras ({active_format}) completado para {package_name}.")
 
     except Exception as e:
-        logger.error(f"Error en conformación de CSV de obras para {package_name}: {e}", exc_info=True)
+        logger.error(f"Error en conformación de dataset de obras para {package_name}: {e}", exc_info=True)
         JSON_JOBS_STORE[package_name] = {
             'status': 'failed',
             'error': str(e),
@@ -1660,8 +1699,9 @@ def _generate_package_json_worker(package_name: str):
 
 async def generate_package_json_endpoint(request: Request):
     """
-    Inicia en segundo plano la conformación de los metadatos de documentos en formato CSV
+    Inicia en segundo plano la conformación de los metadatos de documentos (CSV o Parquet)
     para un paquete cienciométrico previamente calculado.
+    Soporta formato explícito o selección automática basada en tamaño (>50,000 obras -> Parquet).
     Requiere autenticación con ORCID.
     """
     auth_orcid = _check_auth(request)
@@ -1676,86 +1716,139 @@ async def generate_package_json_endpoint(request: Request):
     if not pkg_dir.exists() or not pkg_dir.is_dir():
         return JSONResponse({'error': f'Paquete "{package_name}" no encontrado en disco.'}, status_code=404)
 
+    # Obtener formato solicitado ('parquet' o 'csv')
+    format_choice = request.query_params.get('format', '').strip().lower()
+    if not format_choice:
+        try:
+            body = await request.json()
+            format_choice = str(body.get('format', '')).strip().lower()
+        except Exception:
+            pass
+
+    manifest_file = pkg_dir / "manifest.json"
+    manifest_data = {}
+    if manifest_file.exists():
+        try:
+            with open(manifest_file, 'r', encoding='utf-8') as mf:
+                manifest_data = json.load(mf)
+        except Exception:
+            pass
+
+    total_works = manifest_data.get('total_works') or 0
+    if format_choice not in ('csv', 'parquet'):
+        format_choice = 'parquet' if total_works > 50000 else 'csv'
+
     current_job = JSON_JOBS_STORE.get(package_name, {})
     if current_job.get('status') == 'running':
         return JSONResponse({
             'status': 'running',
             'package_name': package_name,
-            'message': 'La conformación del dataset CSV de obras ya está en progreso en segundo plano.'
+            'message': f'La conformación del dataset de obras ({current_job.get("format", format_choice)}) ya está en progreso en segundo plano.'
         })
 
+    works_parquet = pkg_dir / f"{package_name}_openalex_works.parquet"
     works_csv = pkg_dir / f"{package_name}_openalex_works.csv"
-    json_file = pkg_dir / f"{package_name}_openalex_works.json"
-    active_works_file = works_csv if works_csv.exists() else (json_file if json_file.exists() else None)
 
-    if active_works_file:
-        zip_file = pkg_dir / f"{package_name}.zip"
-        if zip_file.exists():
-            import zipfile
-            from openalex_indicators_engine.exporters.zip_packager import classify_archive_path
-            try:
-                with zipfile.ZipFile(zip_file, 'r') as zf:
-                    names = zf.namelist()
-                arcname = classify_archive_path(active_works_file.name)
-                if arcname not in names:
-                    with zipfile.ZipFile(zip_file, 'a', compression=zipfile.ZIP_DEFLATED) as zf:
-                        zf.write(active_works_file, arcname=arcname)
-            except Exception as e:
-                logger.warning(f"No se pudo asegurar obras en zip existente: {e}")
-
-        JSON_JOBS_STORE[package_name] = {'status': 'completed', 'size_bytes': active_works_file.stat().st_size}
+    # Si ya existe en el formato solicitado, retornar inmediatamente
+    if format_choice == 'parquet' and works_parquet.exists():
+        JSON_JOBS_STORE[package_name] = {'status': 'completed', 'size_bytes': works_parquet.stat().st_size, 'format': 'parquet'}
         return JSONResponse({
             'status': 'completed',
             'package_name': package_name,
+            'format': 'parquet',
+            'message': 'El dataset de obras ya existe y está disponible en formato Parquet.'
+        })
+    elif format_choice == 'csv' and works_csv.exists():
+        JSON_JOBS_STORE[package_name] = {'status': 'completed', 'size_bytes': works_csv.stat().st_size, 'format': 'csv'}
+        return JSONResponse({
+            'status': 'completed',
+            'package_name': package_name,
+            'format': 'csv',
             'message': 'El dataset de obras ya existe y está disponible en formato CSV.'
         })
 
+    # Si existe en CSV y se solicita Parquet, convertir on-demand velozmente con DuckDB
+    if format_choice == 'parquet' and works_csv.exists():
+        try:
+            import duckdb
+            enriched_csv = pkg_dir / f"{package_name}_documentos_enriquecidos.csv"
+            enriched_parquet = pkg_dir / f"{package_name}_documentos_enriquecidos.parquet"
+            logger.info(f"Convirtiendo dataset existente CSV -> Parquet para {package_name} con DuckDB...")
+            duckdb.query(f"COPY (SELECT * FROM read_csv('{works_csv}', auto_detect=true, all_varchar=false)) TO '{works_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+            if enriched_csv.exists():
+                duckdb.query(f"COPY (SELECT * FROM read_csv('{enriched_csv}', auto_detect=true, all_varchar=false)) TO '{enriched_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+            manifest_data['has_works_parquet'] = True
+            manifest_data['has_enriched_parquet'] = enriched_parquet.exists()
+            manifest_data['works_format'] = 'parquet'
+            with open(manifest_file, 'w', encoding='utf-8') as mf:
+                json.dump(manifest_data, mf, ensure_ascii=False, indent=2)
+            JSON_JOBS_STORE[package_name] = {'status': 'completed', 'size_bytes': works_parquet.stat().st_size, 'format': 'parquet'}
+            return JSONResponse({
+                'status': 'completed',
+                'package_name': package_name,
+                'format': 'parquet',
+                'message': 'Dataset de obras convertido y disponible en formato Parquet.'
+            })
+        except Exception as e:
+            logger.warning(f"Error convirtiendo CSV a Parquet on-demand: {e}")
+
     JSON_JOBS_STORE[package_name] = {
         'status': 'running',
+        'format': format_choice,
         'started_at': datetime.now().isoformat()
     }
 
-    t = threading.Thread(target=_generate_package_json_worker, args=(package_name,), daemon=True)
+    t = threading.Thread(target=_generate_package_json_worker, args=(package_name, format_choice), daemon=True)
     t.start()
 
     return JSONResponse({
         'status': 'started',
         'package_name': package_name,
-        'message': 'Conformación del dataset CSV de obras iniciada en segundo plano.'
+        'format': format_choice,
+        'message': f'Conformación del dataset de obras en formato {format_choice.upper()} iniciada en segundo plano.'
     })
 
 
 async def get_package_json_status_endpoint(request: Request):
     """
-    Consulta el estado de generación del archivo CSV/JSON de obras para un paquete.
+    Consulta el estado de generación del archivo de obras para un paquete.
     """
     package_name = request.path_params.get('package_name', '').strip()
     if not package_name:
         return JSONResponse({'error': 'Nombre de paquete requerido.'}, status_code=400)
 
     pkg_dir = EXPORTS_DIR / package_name
+    works_parquet = pkg_dir / f"{package_name}_openalex_works.parquet"
     works_csv = pkg_dir / f"{package_name}_openalex_works.csv"
     json_file = pkg_dir / f"{package_name}_openalex_works.json"
-    has_works = works_csv.exists() or json_file.exists()
+    has_works = works_parquet.exists() or works_csv.exists() or json_file.exists()
 
     job = JSON_JOBS_STORE.get(package_name, {})
     status = job.get('status')
     if not status:
         status = 'completed' if has_works else 'idle'
 
+    works_format = 'parquet' if works_parquet.exists() else ('csv' if works_csv.exists() else job.get('format'))
+    size_bytes = works_parquet.stat().st_size if works_parquet.exists() else (works_csv.stat().st_size if works_csv.exists() else job.get('size_bytes', 0))
+
     return JSONResponse({
         'package_name': package_name,
         'status': status,
         'has_json': has_works,
+        'has_works_file': has_works,
         'has_works_csv': works_csv.exists(),
+        'has_works_parquet': works_parquet.exists(),
+        'works_format': works_format,
+        'size_bytes': size_bytes,
+        'size_mb': round(size_bytes / (1024 * 1024), 2) if size_bytes else 0,
         'error': job.get('error')
     })
 
 
 async def remove_package_json_endpoint(request: Request):
     """
-    Elimina los metadatos de documentos en formato CSV/JSON de un paquete cienciométrico
-    y reconstruye el archivo .ZIP para reducir su tamaño y remover los archivos pesados.
+    Elimina los metadatos de documentos en formato Parquet o CSV de un paquete cienciométrico
+    para liberar espacio en disco.
     Requiere autenticación con ORCID.
     """
     auth_orcid = _check_auth(request)
@@ -1771,11 +1864,15 @@ async def remove_package_json_endpoint(request: Request):
         return JSONResponse({'error': f'Paquete "{package_name}" no encontrado en disco.'}, status_code=404)
 
     # 1. Eliminar archivos de obras de disco si existen
-    works_csv = pkg_dir / f"{package_name}_openalex_works.csv"
-    enriched_csv = pkg_dir / f"{package_name}_documentos_enriquecidos.csv"
-    json_file = pkg_dir / f"{package_name}_openalex_works.json"
+    files_to_remove = [
+        pkg_dir / f"{package_name}_openalex_works.csv",
+        pkg_dir / f"{package_name}_openalex_works.parquet",
+        pkg_dir / f"{package_name}_documentos_enriquecidos.csv",
+        pkg_dir / f"{package_name}_documentos_enriquecidos.parquet",
+        pkg_dir / f"{package_name}_openalex_works.json",
+    ]
 
-    for f in (works_csv, enriched_csv, json_file):
+    for f in files_to_remove:
         if f.exists():
             try:
                 f.unlink()
@@ -1783,34 +1880,7 @@ async def remove_package_json_endpoint(request: Request):
             except Exception as e:
                 logger.warning(f"No se pudo eliminar archivo {f}: {e}")
 
-    # 2. Reconstruir archivo .ZIP sin los archivos de obras
-    zip_path = pkg_dir / f"{package_name}.zip"
-    new_zip_size = 0
-    if zip_path.exists():
-        csv_dir = pkg_dir / "csv_reports"
-        excel_dir = pkg_dir / "excel_reports"
-        parquet_dir = pkg_dir / "parquet_tables"
-        manifest_file = pkg_dir / "manifest.json"
-
-        files_to_zip = []
-        if csv_dir.exists():
-            files_to_zip.extend(list(csv_dir.glob('*.csv')))
-        if excel_dir.exists():
-            files_to_zip.extend(list(excel_dir.glob('*.xlsx')))
-        if parquet_dir.exists():
-            files_to_zip.extend(list(parquet_dir.glob('*.parquet')))
-        if manifest_file.exists():
-            files_to_zip.append(manifest_file)
-
-        try:
-            from openalex_indicators_engine.exporters.zip_packager import create_unified_indicators_zip
-            create_unified_indicators_zip(files_to_zip, zip_path)
-            new_zip_size = zip_path.stat().st_size
-            logger.info(f"Archivo .ZIP reconstruido para {package_name} (nuevo tamaño: {new_zip_size} bytes).")
-        except Exception as e:
-            logger.error(f"Error reconstruyendo archivo .ZIP para {package_name}: {e}", exc_info=True)
-
-    # 3. Actualizar manifest.json
+    # 2. Actualizar manifest.json
     manifest_file = pkg_dir / "manifest.json"
     manifest_data = {}
     if manifest_file.exists():
@@ -1820,15 +1890,19 @@ async def remove_package_json_endpoint(request: Request):
         except Exception:
             manifest_data = {}
 
+    manifest_data['has_works_file'] = False
     manifest_data['has_works_csv'] = False
-    manifest_data['has_enriched_documents_csv'] = False
+    manifest_data['has_works_parquet'] = False
+    manifest_data['has_enriched_csv'] = False
+    manifest_data['has_enriched_parquet'] = False
     manifest_data['has_json'] = False
+    manifest_data.pop('works_format', None)
+    manifest_data.pop('works_size_bytes', None)
+    manifest_data.pop('works_generated_at', None)
     manifest_data.pop('works_csv_generated_at', None)
     manifest_data.pop('works_csv_size_bytes', None)
     manifest_data.pop('enriched_csv_size_bytes', None)
     manifest_data.pop('json_size_bytes', None)
-    if new_zip_size > 0:
-        manifest_data['zip_size_bytes'] = new_zip_size
 
     try:
         with open(manifest_file, 'w', encoding='utf-8') as mf:
@@ -1836,24 +1910,17 @@ async def remove_package_json_endpoint(request: Request):
     except Exception as e:
         logger.warning(f"Error actualizando manifest.json tras remover obras: {e}")
 
-    # 4. Actualizar SQLite si se tiene tamaño nuevo
-    if new_zip_size > 0:
-        try:
-            update_user_package_zip_size(package_name, new_zip_size)
-        except Exception as e:
-            logger.warning(f"Error actualizando tamaño en user_packages: {e}")
-
-    # 5. Limpiar estado en memoria
+    # 3. Limpiar estado en memoria
     JSON_JOBS_STORE.pop(package_name, None)
 
     return JSONResponse({
         'status': 'success',
         'package_name': package_name,
-        'message': f'Datasets de obras en CSV removidos exitosamente del paquete "{package_name}".',
+        'message': f'Datasets de obras removidos exitosamente del paquete "{package_name}".',
         'has_json': False,
+        'has_works_file': False,
         'has_works_csv': False,
-        'zip_size_bytes': new_zip_size,
-        'zip_size_mb': round(new_zip_size / (1024 * 1024), 2)
+        'has_works_parquet': False
     })
 
 
@@ -2099,6 +2166,50 @@ async def download_indicators_zip(request: Request):
     )
 
 
+async def download_works_file_endpoint(request: Request):
+    """
+    Descarga el archivo de metadatos de documentos / obras individuales de un paquete.
+    Soporta formato Parquet o CSV, y dataset OpenAlex u Obras Enriquecidas WoS/InCites.
+    """
+    package_name = request.path_params.get('package_name', '').strip()
+    target_type = request.query_params.get('type', 'works').strip().lower()  # 'works' | 'enriched'
+    requested_format = request.query_params.get('format', '').strip().lower()  # 'parquet' | 'csv'
+
+    pkg_dir = EXPORTS_DIR / package_name
+    if not pkg_dir.exists() or not pkg_dir.is_dir():
+        return JSONResponse({'error': f'Paquete "{package_name}" no encontrado en disco.'}, status_code=404)
+
+    prefix = f"{package_name}_documentos_enriquecidos" if target_type == 'enriched' else f"{package_name}_openalex_works"
+
+    target_file = None
+    if requested_format == 'parquet':
+        f = pkg_dir / f"{prefix}.parquet"
+        if f.exists():
+            target_file = f
+    elif requested_format == 'csv':
+        f = pkg_dir / f"{prefix}.csv"
+        if f.exists():
+            target_file = f
+    else:
+        # Autodetección: preferir parquet si existe, sino csv
+        f_p = pkg_dir / f"{prefix}.parquet"
+        f_c = pkg_dir / f"{prefix}.csv"
+        target_file = f_p if f_p.exists() else (f_c if f_c.exists() else None)
+
+    if not target_file or not target_file.exists():
+        return JSONResponse({'error': f'Archivo de obras ({target_type}) no encontrado en formato {requested_format or "disponible"}.'}, status_code=404)
+
+    is_parquet = target_file.suffix.lower() == '.parquet'
+    media_type = 'application/vnd.apache.parquet' if is_parquet else 'text/csv; charset=utf-8'
+
+    return FileResponse(
+        str(target_file),
+        media_type=media_type,
+        filename=target_file.name,
+        headers={'Content-Disposition': f'attachment; filename="{target_file.name}"'}
+    )
+
+
 async def delete_exported_package(request: Request):
     """Elimina un paquete generado y sus archivos asociados del disco con verificación de propietario/admin."""
     package_name = request.path_params.get('package_name', '').strip()
@@ -2214,6 +2325,7 @@ routes = [
     Route('/api/indicators/packages/{package_name}', delete_exported_package, methods=['DELETE']),
     Route('/api/indicators/delete/{package_name}', delete_exported_package, methods=['DELETE', 'POST']),
     Route('/api/indicators/download/{package_name}', download_indicators_zip, methods=['GET']),
+    Route('/api/indicators/packages/{package_name}/download-works', download_works_file_endpoint, methods=['GET']),
     Route('/api/scopus/status', get_scopus_status_endpoint, methods=['GET']),
     Route('/api/scopus/asjc-catalog', get_asjc_catalog_endpoint, methods=['GET']),
     Route('/api/scopus/estimate', estimate_scopus_volume_endpoint, methods=['POST']),
